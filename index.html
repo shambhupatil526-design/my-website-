@@ -1,0 +1,241 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PRINTFLOW - Printing Management</title>
+
+  <!-- CSS LINK -->
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+<div class="app">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-icon">P</div>
+      <div>
+        <h2>PRINTFLOW</h2>
+        <span>PRINT MANAGEMENT</span>
+      </div>
+    </div>
+
+    <div class="menu-label">MAIN MENU</div>
+
+    <nav>
+      <a class="active" href="#" data-page="dashboard">
+        <span>▦</span> Dashboard
+      </a>
+      <a href="#" data-page="banner"><span>▤</span> New Banner Order</a>
+      <a href="#" data-page="jobwork"><span>▣</span> Job Work</a>
+      <a href="#" data-page="customers"><span>♧</span> Customers</a>
+      <a href="#" data-page="payments"><span>₹</span> Payments</a>
+      <a href="#" data-page="expenses"><span>▥</span> Expenses</a>
+      <a href="#" data-page="orders"><span>▤</span> All Orders</a>
+      <a href="#" data-page="reports"><span>▧</span> Monthly Reports</a>
+    </nav>
+
+    <div class="sidebar-bottom">
+      <div class="profile">
+        <div class="avatar">A</div>
+        <div>
+          <strong>Administrator</strong>
+          <small>Owner Account</small>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+
+    <header class="topbar">
+      <div>
+        <h2>Dashboard</h2>
+        <p>Welcome back! Here's your printing overview.</p>
+      </div>
+      <div class="top-actions">
+        <span class="status">● System Active</span>
+        <div class="avatar">A</div>
+      </div>
+    </header>
+
+    <section class="welcome">
+      <div>
+        <span class="welcome-tag">PRINTING BUSINESS MANAGER</span>
+        <h1>Manage Your Printing Business</h1>
+        <p>All your banner orders, job work and billing in one place.</p>
+      </div>
+      <div class="welcome-decoration">P</div>
+    </section>
+
+    <section class="section-heading">
+      <div>
+        <h3>Business Overview</h3>
+        <p>Your business summary at a glance</p>
+      </div>
+      <span class="date-label">November 2026</span>
+    </section>
+
+    <section class="stats">
+
+      <div class="stat-card">
+        <div class="stat-top">
+          <span>Total Orders</span>
+          <span class="stat-icon wine">▤</span>
+        </div>
+        <h2>00</h2>
+        <small>All printing orders</small>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-top">
+          <span>Total Sales</span>
+          <span class="stat-icon gold">₹</span>
+        </div>
+        <h2>₹0.00</h2>
+        <small>Total billed amount</small>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-top">
+          <span>Payment Received</span>
+          <span class="stat-icon green">✓</span>
+        </div>
+        <h2>₹0.00</h2>
+        <small>Amount collected</small>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-top">
+          <span>Pending Amount</span>
+          <span class="stat-icon orange">◷</span>
+        </div>
+        <h2>₹0.00</h2>
+        <small>Customer outstanding</small>
+      </div>
+
+    </section>
+
+    <section class="content-grid">
+
+      <div class="panel">
+        <div class="panel-heading">
+          <div>
+            <h3>Quick Actions</h3>
+            <p>Start a new transaction</p>
+          </div>
+        </div>
+
+        <div class="quick-actions">
+          <button class="action-card" data-page="banner">
+            <span class="action-icon wine">＋</span>
+            <strong>New Banner Order</strong>
+            <small>Create printing bill</small>
+          </button>
+
+          <button class="action-card" data-page="jobwork">
+            <span class="action-icon gold">▣</span>
+            <strong>New Job Work</strong>
+            <small>Customer supplied design</small>
+          </button>
+
+          <button class="action-card" data-page="payments">
+            <span class="action-icon green">₹</span>
+            <strong>Receive Payment</strong>
+            <small>Update customer payment</small>
+          </button>
+
+          <button class="action-card" data-page="reports">
+            <span class="action-icon orange">▤</span>
+            <strong>View Reports</strong>
+            <small>Monthly business report</small>
+          </button>
+        </div>
+      </div>
+
+      <div class="panel summary-panel">
+        <div class="panel-heading">
+          <div>
+            <h3>Monthly Summary</h3>
+            <p>November 2026</p>
+          </div>
+        </div>
+
+        <div class="summary-row">
+          <span>Total Printing</span>
+          <strong>₹0.00</strong>
+        </div>
+
+        <div class="summary-row">
+          <span>Pasting Income</span>
+          <strong>₹0.00</strong>
+        </div>
+
+        <div class="summary-row">
+          <span>Job Work Income</span>
+          <strong>₹0.00</strong>
+        </div>
+
+        <div class="summary-row">
+          <span>Total Expenses</span>
+          <strong>₹0.00</strong>
+        </div>
+
+        <div class="profit-box">
+          <span>Net Profit / Loss</span>
+          <h2>₹0.00</h2>
+        </div>
+      </div>
+
+    </section>
+
+    <section class="panel orders-panel">
+      <div class="panel-heading">
+        <div>
+          <h3>Recent Orders</h3>
+          <p>Latest banner printing records</p>
+        </div>
+        <button class="view-btn" data-page="orders">View All →</button>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Bill No.</th>
+              <th>Customer</th>
+              <th>File Name</th>
+              <th>Media</th>
+              <th>Amount</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td colspan="6" class="empty">
+                No orders available yet.
+                <br>
+                Your new orders will appear here.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer>
+      PRINTFLOW · Printing Management System
+      <span>Version 1.0</span>
+    </footer>
+
+  </main>
+</div>
+
+<!-- JAVASCRIPT LINK -->
+<script src="script.js"></script>
+
+</body>
+</html>
