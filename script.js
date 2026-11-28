@@ -1,12 +1,23 @@
-document.addEventListener("DOMContentLoaded", function () {
-  const main = document.querySelector(".main");
 
-  if (!main) {
-    alert("PRINTFLOW: Main section सापडला नाही.");
-    return;
-  }
+document.addEventListener("DOMContentLoaded", async () => {
 
-  const dashboardHTML = main.innerHTML;
+  // =========================================
+  // SUPABASE CONNECTION
+  // =========================================
+
+  const SUPABASE_URL = "https://vmmabixqtnmeijyhhqmu.supabase.co";
+  const SUPABASE_KEY = "sb_publishable_MgGuckOn578rxz5BfryCZA_R1At9k2A";
+
+  const ADMIN_EMAIL = "shambhupatil526@gmail.com";
+  const EXECUTIVE_EMAIL = "kadam6884@gmail.com";
+
+  const ADMIN_UID = "6a2cf31a-7345-4709-8ffb-d66fdeff18df";
+  const EXECUTIVE_UID = "1c00e279-873b-40b7-8ea6-119f4fcb6539";
+
+  const supabaseClient = window.supabase.createClient(
+    SUPABASE_URL,
+    SUPABASE_KEY
+  );
 
   const KEYS = {
     orders: "printflowOrders",
@@ -15,1307 +26,2378 @@ document.addEventListener("DOMContentLoaded", function () {
     expenses: "printflowExpenses"
   };
 
-  const EXPENSE_CATEGORIES = [
-    "Ink / Cartridges",
-    "Paper",
-    "Labour",
-    "Electricity / Rent",
-    "Transport",
-    "Other Expenses"
-  ];
+  const TABLES = {
+    [KEYS.orders]: "orders",
+    [KEYS.jobs]: "job_works",
+    [KEYS.payments]: "payments",
+    [KEYS.expenses]: "expenses"
+  };
 
-  const money = amount =>
-    "₹" + Number(amount || 0).toLocaleString("en-IN", {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
-    });
+  const ID_FIELDS = {
+    [KEYS.orders]: "orderId",
+    [KEYS.jobs]: "jobWorkId",
+    [KEYS.payments]: "paymentId",
+    [KEYS.expenses]: "expenseId"
+  };
 
-  function get(id) {
-    return document.getElementById(id);
+  const LOGIN_KEY = "printflowLoginCredentials";
+  const SESSION_KEY = "printflowLoginSession";
+  const USERNAME_KEY = "printflowUsernames";
+
+  const $ = (selector, root = document) => root.querySelector(selector);
+  const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+
+  const content = $("#pageContent");
+
+  let currentPage = "dashboard";
+  let selectedRole = "admin";
+  let cloudReady = false;
+  let syncQueues = {};
+
+  // =========================================
+  // BASIC HELPERS
+  // =========================================
+
+  function toast(message) {
+    const old = $(".toast");
+    if (old) old.remove();
+
+    const el = document.createElement("div");
+    el.className = "toast";
+    el.textContent = message;
+    document.body.appendChild(el);
+
+    setTimeout(() => el.remove(), 2600);
   }
 
-  function value(id) {
-    return get(id)?.value || "";
-  }
-
-  function number(id) {
-    return Number(value(id)) || 0;
-  }
-
-  function safe(value) {
-    return String(value ?? "").replace(/[&<>"']/g, char => ({
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      '"': "&quot;",
-      "'": "&#039;"
-    })[char]);
-  }
-
-  function readData(key) {
+  function currentRole() {
     try {
-      const data = JSON.parse(localStorage.getItem(key) || "[]");
-      return Array.isArray(data) ? data : [];
-    } catch (error) {
+      const session = JSON.parse(
+        localStorage.getItem(SESSION_KEY) || "null"
+      );
+
+      return session?.role || "";
+    } catch {
+      return "";
+    }
+  }
+
+  function isAdmin() {
+    return currentRole() === "admin";
+  }
+
+  function isExecutive() {
+    return currentRole() === "executive";
+  }
+
+  function read(key) {
+    try {
+      return JSON.parse(localStorage.getItem(key) || "[]");
+    } catch {
       return [];
     }
   }
 
-  function writeData(key, data) {
+  function orders() {
+    return read(KEYS.orders);
+  }
+
+  function jobs() {
+    return read(KEYS.jobs);
+  }
+
+  function payments() {
+    return read(KEYS.payments);
+  }
+
+  function expenses() {
+    return read(KEYS.expenses);
+  }
+
+  function storageKey(key) {
+    if (key === "orders" || key === KEYS.orders) return KEYS.orders;
+    if (key === "jobs" || key === KEYS.jobs) return KEYS.jobs;
+    return key;
+  }
+
+  const money = n => "₹" + Number(n || 0).toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+
+  const num = v => Math.max(0, Number(v) || 0);
+
+  const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({
+    "&":"&amp;",
+    "<":"&lt;",
+    ">":"&gt;",
+    '"':"&quot;",
+    "'":"&#39;"
+  })[c]);
+
+  const today = () => {
+    const d = new Date();
+
+    return [
+      d.getFullYear(),
+      String(d.getMonth() + 1).padStart(2, "0"),
+      String(d.getDate()).padStart(2, "0")
+    ].join("-");
+  };
+
+  const dateText = d => d
+    ? new Date(d + "T00:00:00").toLocaleDateString("en-IN")
+    : "-";
+
+  const id = prefix => prefix + "-" + Date.now().toString().slice(-8);
+
+  // =========================================
+  // USERNAME MANAGEMENT
+  // =========================================
+
+  function getUsernames() {
     try {
-      localStorage.setItem(key, JSON.stringify(data));
-      return true;
+      return JSON.parse(localStorage.getItem(USERNAME_KEY)) || {
+        admin: "admin",
+        executive: "executive"
+      };
+    } catch {
+      return {
+        admin: "admin",
+        executive: "executive"
+      };
+    }
+  }
+
+  function getUsername(role) {
+    return getUsernames()[role] || role;
+  }
+
+  // =========================================
+  // ADMIN / EXECUTIVE PERMISSIONS
+  // =========================================
+
+  const permissionStyle = document.createElement("style");
+
+  permissionStyle.textContent = `
+    body.auth-locked .app {
+      display:none !important;
+    }
+
+    body.executive-view .sidebar nav [data-page="banner"],
+    body.executive-view .sidebar nav [data-page="jobwork"] {
+      display:none !important;
+    }
+
+    body.executive-view #pageContent [data-page="banner"],
+    body.executive-view #pageContent [data-page="jobwork"],
+    body.executive-view #pageContent #addBanner,
+    body.executive-view #pageContent [data-edit-record],
+    body.executive-view #pageContent [data-delete-record],
+    body.executive-view #pageContent [data-delete-expense],
+    body.executive-view #pageContent .admin-only {
+      display:none !important;
+    }
+  `;
+
+  document.head.appendChild(permissionStyle);
+
+  // =========================================
+  // LOGIN SCREEN
+  // =========================================
+
+  function showLogin() {
+    document.body.classList.add("auth-locked");
+    document.body.classList.remove("executive-view");
+
+    const screen = $("#loginScreen");
+    if (screen) screen.style.display = "flex";
+  }
+
+  function showApp() {
+    document.body.classList.remove("auth-locked");
+    document.body.classList.toggle("executive-view", !isAdmin());
+
+    const screen = $("#loginScreen");
+    if (screen) screen.style.display = "none";
+
+    const session = JSON.parse(
+      localStorage.getItem(SESSION_KEY) || "null"
+    );
+
+    if (!session) return;
+
+    const topbar = $(".topbar");
+
+    if (!topbar) return;
+
+    let actions = $("#authActions");
+
+    if (!actions) {
+      actions = document.createElement("div");
+      actions.className = "auth-actions";
+      actions.id = "authActions";
+      topbar.appendChild(actions);
+    }
+
+    actions.innerHTML = `
+      <span style="font-size:12px;font-weight:700;color:#345">
+        ${session.role === "admin" ? "ADMIN" : "EXECUTIVE"}
+      </span>
+
+      <button type="button" id="changeUsernameBtn">
+        Change Username
+      </button>
+
+      <button type="button" id="changePasswordBtn">
+        Change Password
+      </button>
+
+      <button type="button" class="logout" id="logoutBtn">
+        Logout
+      </button>
+    `;
+
+    $("#logoutBtn").onclick = logout;
+    $("#changePasswordBtn").onclick = changePassword;
+    $("#changeUsernameBtn").onclick = changeUsername;
+  }
+
+  // =========================================
+  // SUPABASE AUTH LOGIN
+  // =========================================
+
+  $$(".login-tabs button").forEach(button => {
+    button.addEventListener("click", () => {
+      selectedRole = button.dataset.role;
+
+      $$(".login-tabs button").forEach(tab => {
+        tab.classList.toggle("active", tab === button);
+      });
+
+      $("#loginError").textContent = "";
+      $("#loginUsername").value = "";
+      $("#loginPassword").value = "";
+    });
+  });
+
+  $("#loginForm").addEventListener("submit", async event => {
+    event.preventDefault();
+
+    const username = $("#loginUsername").value.trim();
+    const password = $("#loginPassword").value;
+
+    const errorBox = $("#loginError");
+    const submitButton = $(".login-submit");
+
+    if (username !== getUsername(selectedRole)) {
+      errorBox.textContent = "Incorrect username or password.";
+      return;
+    }
+
+    submitButton.disabled = true;
+    submitButton.textContent = "Please wait...";
+
+    const email = selectedRole === "admin"
+      ? ADMIN_EMAIL
+      : EXECUTIVE_EMAIL;
+
+    try {
+      const { data, error } = await supabaseClient.auth.signInWithPassword({
+        email,
+        password
+      });
+
+      if (error) throw error;
+
+      const user = data.user;
+
+      const validUser =
+        (selectedRole === "admin" && user.id === ADMIN_UID) ||
+        (selectedRole === "executive" && user.id === EXECUTIVE_UID);
+
+      if (!validUser) {
+        await supabaseClient.auth.signOut();
+        throw new Error("या Account ला निवडलेल्या Role ची परवानगी नाही.");
+      }
+
+      localStorage.setItem(SESSION_KEY, JSON.stringify({
+        role: selectedRole,
+        username,
+        userId: user.id
+      }));
+
+      errorBox.textContent = "";
+
+      showApp();
+
+      await startApplication();
+
     } catch (error) {
-      alert("डेटा सेव्ह झाला नाही. Browser Storage तपासा.");
+      errorBox.textContent =
+        error.message || "Login अयशस्वी. पुन्हा प्रयत्न करा.";
+    } finally {
+      submitButton.disabled = false;
+      submitButton.textContent = "Login to Dashboard";
+    }
+  });
+
+  async function logout() {
+    await supabaseClient.auth.signOut();
+
+    localStorage.removeItem(SESSION_KEY);
+
+    location.reload();
+  }
+
+  // =========================================
+  // CHANGE PASSWORD
+  // =========================================
+
+  async function changePassword() {
+    if (!currentRole()) return;
+
+    const newPassword = prompt(
+      "Enter new password (minimum 6 characters):"
+    );
+
+    if (newPassword === null) return;
+
+    if (newPassword.length < 6) {
+      return alert("Password must contain at least 6 characters.");
+    }
+
+    const confirmPassword = prompt("Confirm new password:");
+
+    if (confirmPassword !== newPassword) {
+      return alert("Passwords do not match.");
+    }
+
+    const { error } = await supabaseClient.auth.updateUser({
+      password: newPassword
+    });
+
+    if (error) {
+      alert("Password बदलता आला नाही: " + error.message);
+      return;
+    }
+
+    alert("Password changed successfully.");
+  }
+
+  // =========================================
+  // CHANGE USERNAME
+  // =========================================
+
+  function changeUsername() {
+    const role = currentRole();
+    if (!role) return;
+
+    const oldUsername = getUsername(role);
+
+    const newUsername = prompt(
+      "Enter new username:",
+      oldUsername
+    );
+
+    if (newUsername === null) return;
+
+    if (newUsername.trim().length < 3) {
+      return alert("Username किमान 3 अक्षरांचा असावा.");
+    }
+
+    const usernames = getUsernames();
+
+    usernames[role] = newUsername.trim();
+
+    localStorage.setItem(
+      USERNAME_KEY,
+      JSON.stringify(usernames)
+    );
+
+    alert("Username changed successfully.");
+
+    showApp();
+  }
+
+  // =========================================
+  // DATABASE SYNC
+  // =========================================
+
+  function getRecordId(key, record) {
+    const field = ID_FIELDS[key];
+    return record?.[field] ? String(record[field]) : "";
+  }
+
+  function makeDatabaseRows(key, records) {
+    return records
+      .filter(record => getRecordId(key, record))
+      .map(record => ({
+        id: getRecordId(key, record),
+        data: record,
+        updated_at: new Date().toISOString()
+      }));
+  }
+
+  async function loadCloudData() {
+    const cloudData = {};
+
+    for (const key of Object.keys(TABLES)) {
+      const table = TABLES[key];
+
+      const { data, error } = await supabaseClient
+        .from(table)
+        .select("id,data");
+
+      if (error) throw error;
+
+      cloudData[key] = data || [];
+    }
+
+    return cloudData;
+  }
+
+  async function uploadRows(key, records) {
+    if (!isAdmin() || !records.length) return;
+
+    const table = TABLES[key];
+    const rows = makeDatabaseRows(key, records);
+
+    if (!rows.length) return;
+
+    const { error } = await supabaseClient
+      .from(table)
+      .upsert(rows, { onConflict: "id" });
+
+    if (error) throw error;
+  }
+
+  async function deleteCloudRows(key, ids) {
+    if (!isAdmin() || !ids.length) return;
+
+    const table = TABLES[key];
+
+    const { error } = await supabaseClient
+      .from(table)
+      .delete()
+      .in("id", ids);
+
+    if (error) throw error;
+  }
+
+  async function syncInitialData() {
+    try {
+      const cloudData = await loadCloudData();
+
+      for (const key of Object.keys(TABLES)) {
+        const localRecords = read(key);
+
+        const cloudRecords = cloudData[key].map(row => ({
+          id: row.id,
+          data: row.data
+        }));
+
+        const merged = new Map();
+
+        // आधी Cloud Data
+        cloudRecords.forEach(row => {
+          if (row.data) {
+            merged.set(String(row.id), row.data);
+          }
+        });
+
+        // Local Data फक्त Cloud मध्ये नसल्यास जोडा
+        const localOnly = [];
+
+        localRecords.forEach(record => {
+          const recordId = getRecordId(key, record);
+
+          if (!recordId) return;
+
+          if (!merged.has(recordId)) {
+            merged.set(recordId, record);
+            localOnly.push(record);
+          }
+        });
+
+        const finalRecords = [...merged.values()];
+
+        localStorage.setItem(
+          key,
+          JSON.stringify(finalRecords)
+        );
+
+        // Admin असल्यास जुना Local Data Cloud मध्ये पाठवा
+        if (isAdmin() && localOnly.length) {
+          await uploadRows(key, localOnly);
+        }
+      }
+
+      cloudReady = true;
+
+      toast("Database Sync पूर्ण झाले.");
+
+      return true;
+
+    } catch (error) {
+      console.error("Database Sync Error:", error);
+
+      cloudReady = false;
+
+      toast("Database Sync अयशस्वी. Local Data वापरत आहोत.");
+
       return false;
     }
   }
 
-  function saveData(key, data) {
-    const oldData = readData(key);
-    oldData.push(data);
-    return writeData(key, oldData);
-  }
+  // =========================================
+  // SAVE / UPDATE / DELETE DATABASE RECORDS
+  // =========================================
 
-  function localDate(date = new Date()) {
-    const d = new Date(date);
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, "0");
-    const day = String(d.getDate()).padStart(2, "0");
-    return `${year}-${month}-${day}`;
-  }
+  function write(key, data) {
+    if (!isAdmin()) {
+      toast("तुम्हाला बदल करण्याची परवानगी नाही.");
+      return false;
+    }
 
-  function dateOf(item) {
-    if (!item.date) return "";
-    return String(item.date).slice(0, 10);
-  }
+    const actualKey = storageKey(key);
 
-  function isInMonth(item, month, year) {
-    const date = dateOf(item);
-    return date && date.slice(0, 4) === String(year) &&
-      date.slice(5, 7) === String(month).padStart(2, "0");
-  }
+    if (!TABLES[actualKey]) {
+      return false;
+    }
 
-  function formatDate(date) {
-    if (!date) return "-";
-    const d = new Date(date.length === 10 ? date + "T00:00:00" : date);
-    return isNaN(d) ? "-" : d.toLocaleDateString("en-IN");
-  }
+    const previous = read(actualKey);
 
-  // ==========================================
-  // DASHBOARD
-  // ==========================================
-
-  function getBusinessTotals() {
-    const orders = readData(KEYS.orders);
-    const jobs = readData(KEYS.jobs);
-    const expenses = readData(KEYS.expenses);
-
-    const records = [...orders, ...jobs];
-
-    return {
-      orders: orders.length,
-      jobs: jobs.length,
-      sales: records.reduce((s, x) => s + Number(x.total || 0), 0),
-      received: records.reduce((s, x) => s + Number(x.received || 0), 0),
-      pending: records.reduce((s, x) => s + Number(x.balance || 0), 0),
-      expenses: expenses.reduce((s, x) => s + Number(x.amount || 0), 0)
-    };
-  }
-
-  function openDashboard() {
-    main.innerHTML = dashboardHTML;
-
-    const t = getBusinessTotals();
-
-    const overview = document.createElement("div");
-    overview.className = "panel pf-live-overview";
-
-    overview.innerHTML = `
-      <h3>Business Overview</h3>
-      <div class="form-grid">
-        <div class="total-box">
-          <p>Total Banner Orders</p>
-          <h2>${t.orders}</h2>
-        </div>
-        <div class="total-box">
-          <p>Total Job Works</p>
-          <h2>${t.jobs}</h2>
-        </div>
-        <div class="total-box">
-          <p>Total Sales</p>
-          <h2>${money(t.sales)}</h2>
-        </div>
-        <div class="total-box">
-          <p>Total Received</p>
-          <h2>${money(t.received)}</h2>
-        </div>
-        <div class="total-box">
-          <p>Pending Amount</p>
-          <h2>${money(t.pending)}</h2>
-        </div>
-        <div class="total-box">
-          <p>Total Expenses</p>
-          <h2>${money(t.expenses)}</h2>
-        </div>
-      </div>
-    `;
-
-    main.insertBefore(overview, main.firstChild);
-    bindNavigation();
-  }
-
-  function bindNavigation() {
-    main.querySelectorAll("[data-page]").forEach(button => {
-      button.addEventListener("click", function (event) {
-        event.preventDefault();
-
-        const page = this.dataset.page;
-
-        if (page === "dashboard") openDashboard();
-        if (page === "banner") openBannerOrder();
-        if (page === "jobwork") openJobWork();
-        if (page === "payments") openReceivePayment();
-        if (page === "reports") openReports();
-        if (page === "expenses") openExpenses();
-
-        if (["customers", "orders"].includes(page)) {
-          alert("हा विभाग पुढील टप्प्यात तयार करू.");
-        }
-      });
-    });
-  }
-
-  // ==========================================
-  // COMMON MEDIA OPTIONS
-  // ==========================================
-
-  const mediaOptions = `
-    <option value="Regular">Regular</option>
-    <option value="Star">Star</option>
-    <option value="China">China</option>
-    <option value="Blacklight">Blacklight</option>
-    <option value="One Way Vinyl">One Way Vinyl</option>
-  `;
-
-  // ==========================================
-  // BANNER ORDER
-  // ==========================================
-
-  function openBannerOrder() {
-    main.innerHTML = `
-      <div class="form-page">
-        <div class="form-header">
-          <button type="button" id="backDashboard">← Back</button>
-          <h2>New Banner Order</h2>
-        </div>
-
-        <div class="panel">
-          <h3>Customer Details</h3>
-          <div class="form-grid">
-            <div>
-              <label>Customer Name</label>
-              <input id="customerName" type="text" placeholder="Enter customer name">
-            </div>
-            <div>
-              <label>Mobile Number</label>
-              <input id="customerMobile" type="tel" maxlength="10" placeholder="Mobile number">
-            </div>
-            <div>
-              <label>File Name</label>
-              <input id="customerFile" type="text" placeholder="Design / File name">
-            </div>
-          </div>
-        </div>
-
-        <div class="panel">
-          <div class="section-heading">
-            <h3>Banner Details</h3>
-            <button type="button" id="addBanner">+ Add Banner</button>
-          </div>
-          <div id="bannerList"></div>
-        </div>
-
-        <div class="panel">
-          <h3>Order Summary</h3>
-          <div class="total-box">
-            <p>Total Square Feet: <strong id="totalArea">0</strong></p>
-            <p>Printing Amount: <strong id="printingAmount">₹0.00</strong></p>
-            <p>Pasting Amount: <strong id="pastingAmount">₹0.00</strong></p>
-            <p>Banner Total: <strong id="bannerTotal">₹0.00</strong></p>
-          </div>
-
-          <div class="form-grid">
-            <div>
-              <label>Amount Received</label>
-              <input id="receivedAmount" type="number" min="0" value="0">
-            </div>
-            <div>
-              <label>Balance Amount</label>
-              <input id="balanceAmount" type="text" readonly value="₹0.00">
-            </div>
-          </div>
-
-          <h2 id="finalBill">Final Bill Amount: ₹0.00</h2>
-          <button type="button" id="saveOrder">Save Banner Order</button>
-          <button type="button" id="cancelOrder">Cancel</button>
-        </div>
-      </div>
-    `;
-
-    addBannerRow("bannerList", "banner");
-
-    get("addBanner").addEventListener("click", () =>
-      addBannerRow("bannerList", "banner")
+    localStorage.setItem(
+      actualKey,
+      JSON.stringify(data)
     );
 
-    get("bannerList").addEventListener("input", calculateBannerOrder);
-    get("bannerList").addEventListener("change", calculateBannerOrder);
-    get("receivedAmount").addEventListener("input", calculateBannerOrder);
-    get("saveOrder").addEventListener("click", saveBannerOrder);
-    get("cancelOrder").addEventListener("click", openDashboard);
-    get("backDashboard").addEventListener("click", openDashboard);
+    if (!cloudReady) {
+      toast("Local मध्ये सेव्ह झाले. Database Sync बाकी आहे.");
+      return true;
+    }
+
+    const oldIds = new Set(
+      previous.map(x => getRecordId(actualKey, x)).filter(Boolean)
+    );
+
+    const newIds = new Set(
+      data.map(x => getRecordId(actualKey, x)).filter(Boolean)
+    );
+
+    const removedIds = [...oldIds].filter(x => !newIds.has(x));
+
+    // प्रत्येक Table साठी क्रमाने Sync
+    syncQueues[actualKey] = (syncQueues[actualKey] || Promise.resolve())
+      .then(async () => {
+        await uploadRows(actualKey, data);
+        await deleteCloudRows(actualKey, removedIds);
+      })
+      .catch(error => {
+        console.error("Cloud Save Error:", error);
+        toast("Cloud Sync अयशस्वी. Local Data सुरक्षित आहे.");
+      });
+
+    return true;
   }
 
-  // ==========================================
-  // ADD BANNER ROW
-  // ==========================================
+  // =========================================
+  // START APPLICATION AFTER AUTH
+  // =========================================
 
-  function addBannerRow(containerId, type) {
-    const container = get(containerId);
-    const index = container.children.length + 1;
-    const row = document.createElement("div");
+  async function startApplication() {
+    showApp();
 
-    row.className = "banner-item";
+    document.body.classList.toggle("executive-view", !isAdmin());
 
-    row.innerHTML = `
-      <div class="section-heading">
-        <h4>Banner ${index}</h4>
-        <button type="button" class="remove-banner">Remove</button>
-      </div>
+    await syncInitialData();
 
-      <div class="form-grid">
-        <div>
-          <label>Media Type</label>
-          <select class="media">${mediaOptions}</select>
-        </div>
-        <div>
-          <label>Width (Feet)</label>
-          <input class="width" type="number" min="0" step="0.01" value="0">
-        </div>
-        <div>
-          <label>Height (Feet)</label>
-          <input class="height" type="number" min="0" step="0.01" value="0">
-        </div>
-        <div>
-          <label>Quantity</label>
-          <input class="quantity" type="number" min="1" value="1">
-        </div>
-        <div>
-          <label>Printing Rate / Sq.Ft.</label>
-          <input class="rate" type="number" min="0" step="0.01" value="0">
-        </div>
-
-        ${type === "banner" ? `
-          <div>
-            <label>Pasting Required?</label>
-            <select class="pasting">
-              <option value="No">No</option>
-              <option value="Yes">Yes</option>
-            </select>
-          </div>
-          <div>
-            <label>Pasting Rate / Sq.Ft.</label>
-            <input class="pasting-rate" type="number" min="0" step="0.01" value="0">
-          </div>
-        ` : ""}
-      </div>
-
-      <div class="total-box">
-        <p>Square Feet: <strong class="row-area">0</strong></p>
-        <p>Printing Amount: <strong class="row-print">₹0.00</strong></p>
-        ${type === "banner" ? `<p>Pasting Amount: <strong class="row-paste">₹0.00</strong></p>` : ""}
-        <p>Banner Amount: <strong class="row-total">₹0.00</strong></p>
-      </div>
-    `;
-
-    container.appendChild(row);
-
-    row.querySelector(".remove-banner").addEventListener("click", function () {
-      if (container.children.length <= 1) {
-        alert("कमीत कमी एक Banner ठेवणे आवश्यक आहे.");
-        return;
-      }
-
-      row.remove();
-      renumberBanners(container);
-
-      if (type === "banner") calculateBannerOrder();
-      else calculateJobWork();
-    });
-
-    if (type === "banner") calculateBannerOrder();
-    else calculateJobWork();
+    navigate("dashboard");
   }
 
-  function renumberBanners(container) {
-    [...container.children].forEach((row, index) => {
-      const heading = row.querySelector("h4");
-      if (heading) heading.textContent = "Banner " + (index + 1);
-    });
+  // =========================================
+  // PRINT FUNCTION
+  // =========================================
+
+  function printReport(title, html) {
+    const win = window.open("", "_blank");
+
+    if (!win) {
+      return toast("Print साठी Popup Allow करा.");
+    }
+
+    win.document.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>${esc(title)}</title>
+        <meta charset="UTF-8">
+        <style>
+          body {
+            font-family: Arial, sans-serif;
+            padding: 25px;
+            color: #17233c;
+          }
+          h1 { margin-bottom: 20px; }
+          table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+          }
+          th, td {
+            border: 1px solid #dce3ed;
+            padding: 9px;
+            text-align: left;
+            font-size: 12px;
+          }
+          th { background: #edf2fa; }
+          .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+          }
+          .stat-card, .panel, .summary {
+            border: 1px solid #dce3ed;
+            padding: 12px;
+            margin: 10px 0;
+            border-radius: 6px;
+          }
+          button { display: none !important; }
+          @media print {
+            body { padding: 0; }
+          }
+        </style>
+      </head>
+      <body>
+        <h1>${esc(title)}</h1>
+        ${html}
+        <script>
+          window.onload = function() {
+            window.print();
+          };
+        <\/script>
+      </body>
+      </html>
+    `);
+
+    win.document.close();
   }
 
-  function getBannerRows(containerId, type) {
-    return [...get(containerId).querySelectorAll(".banner-item")].map(row => {
-      const width = Number(row.querySelector(".width").value) || 0;
-      const height = Number(row.querySelector(".height").value) || 0;
-      const quantity = Number(row.querySelector(".quantity").value) || 0;
-      const rate = Number(row.querySelector(".rate").value) || 0;
+  // =========================================
+  // EDIT ORDER / JOB WORK
+  // =========================================
 
-      const area = width * height * quantity;
-      const printing = area * rate;
+  function editRecord(key, recordId) {
+    if (!isAdmin()) {
+      return toast("Edit करण्याची परवानगी फक्त Admin ला आहे.");
+    }
 
-      let pasting = 0;
-      let pastingRequired = "No";
-      let pastingRate = 0;
+    const actualKey = storageKey(key);
+    const data = read(actualKey);
 
-      if (type === "banner") {
-        pastingRequired = row.querySelector(".pasting").value;
-        pastingRate = Number(row.querySelector(".pasting-rate").value) || 0;
+    const index = data.findIndex(x =>
+      String(x.orderId || x.jobWorkId) === String(recordId)
+    );
 
-        if (pastingRequired === "Yes") {
-          pasting = area * pastingRate;
+    if (index < 0) return toast("ऑर्डर सापडली नाही.");
+
+    const record = data[index];
+    const job = actualKey === KEYS.jobs;
+
+    const customer = prompt("Customer Name:", record.customer || "");
+    if (customer === null) return;
+
+    if (!customer.trim()) {
+      return toast("Customer Name आवश्यक आहे.");
+    }
+
+    const mobile = prompt("Mobile Number:", record.mobile || "");
+    if (mobile === null) return;
+
+    const date = prompt("Order Date (YYYY-MM-DD):", record.date || today());
+    if (date === null) return;
+
+    const file = prompt("File / Design Details:", record.file || "");
+    if (file === null) return;
+
+    const editedBanners = [];
+
+    for (let i = 0; i < (record.banners || []).length; i++) {
+      const b = record.banners[i];
+
+      const media = prompt(`Banner ${i + 1} - Material:`, b.media || "");
+      if (media === null) return;
+
+      const width = prompt(`Banner ${i + 1} - Width:`, b.width);
+      if (width === null) return;
+
+      const height = prompt(`Banner ${i + 1} - Height:`, b.height);
+      if (height === null) return;
+
+      const quantity = prompt(`Banner ${i + 1} - Quantity:`, b.quantity);
+      if (quantity === null) return;
+
+      const rate = prompt(`Banner ${i + 1} - Printing Rate:`, b.rate);
+      if (rate === null) return;
+
+      let pastingAmount = num(b.pasting);
+      const pastingRate = num(b.pastingRate);
+
+      if (!job) {
+        const answer = prompt(
+          `Banner ${i + 1} - Pasting Amount:`,
+          pastingAmount
+        );
+
+        if (answer === null) return;
+
+        pastingAmount = Number(answer);
+
+        if (!Number.isFinite(pastingAmount) || pastingAmount < 0) {
+          return toast("Pasting Amount योग्य भरा.");
         }
       }
 
-      return {
-        media: row.querySelector(".media").value,
-        width,
-        height,
-        quantity,
-        rate,
+      const w = Number(width);
+      const h = Number(height);
+      const q = Number(quantity);
+      const r = Number(rate);
+
+      if (
+        !media.trim() ||
+        !Number.isFinite(w) || w <= 0 ||
+        !Number.isFinite(h) || h <= 0 ||
+        !Number.isFinite(q) || q <= 0 ||
+        !Number.isFinite(r) || r < 0
+      ) {
+        return toast("Banner ची माहिती योग्य भरा.");
+      }
+
+      const area = w * h * q;
+      const printing = area * r;
+      const pasting = job ? 0 : pastingAmount;
+      const amount = printing + pasting;
+
+      editedBanners.push({
+        ...b,
+        media: media.trim(),
+        width: w,
+        height: h,
+        quantity: q,
+        rate: r,
         area,
         printing,
-        pastingRequired,
-        pastingRate,
         pasting,
-        total: printing + pasting
-      };
-    });
+        pastingRate,
+        amount
+      });
+    }
+
+    const total = editedBanners.reduce((s, x) => s + x.amount, 0);
+    const received = getReceived(record);
+    const discount = getDiscount(record);
+
+    if (received + discount > total + 0.001) {
+      return toast("Total रक्कम Received + Discount पेक्षा कमी असू शकत नाही.");
+    }
+
+    record.customer = customer.trim();
+    record.mobile = mobile.trim();
+    record.date = date;
+    record.file = file.trim();
+    record.banners = editedBanners;
+    record.totalArea = editedBanners.reduce((s, x) => s + x.area, 0);
+    record.printingAmount = editedBanners.reduce((s, x) => s + x.printing, 0);
+    record.pastingAmount = editedBanners.reduce((s, x) => s + x.pasting, 0);
+    record.total = total;
+    record.balance = Math.max(0, total - received - discount);
+    record.status = record.balance <= 0 ? "Paid" : "Pending";
+
+    data[index] = record;
+    write(actualKey, data);
+
+    toast("ऑर्डर अपडेट झाली.");
+    navigate(currentPage);
   }
 
-  function updateIndividualBannerSummary(containerId, type) {
-    const container = get(containerId);
-    if (!container) return;
+  // =========================================
+  // DELETE ORDER / JOB WORK
+  // =========================================
 
-    container.querySelectorAll(".banner-item").forEach(row => {
-      const width = Number(row.querySelector(".width").value) || 0;
-      const height = Number(row.querySelector(".height").value) || 0;
-      const quantity = Number(row.querySelector(".quantity").value) || 0;
-      const rate = Number(row.querySelector(".rate").value) || 0;
-
-      const area = width * height * quantity;
-      const printing = area * rate;
-
-      let pasting = 0;
-
-      if (type === "banner") {
-        const required = row.querySelector(".pasting").value;
-        const pasteRate = Number(row.querySelector(".pasting-rate").value) || 0;
-
-        if (required === "Yes") pasting = area * pasteRate;
-      }
-
-      row.querySelector(".row-area").textContent = area.toFixed(2) + " Sq.Ft.";
-      row.querySelector(".row-print").textContent = money(printing);
-
-      const pasteElement = row.querySelector(".row-paste");
-      if (pasteElement) pasteElement.textContent = money(pasting);
-
-      row.querySelector(".row-total").textContent = money(printing + pasting);
-    });
-  }
-
-  function calculateBannerOrder() {
-    if (!get("bannerList")) return;
-
-    updateIndividualBannerSummary("bannerList", "banner");
-
-    const rows = getBannerRows("bannerList", "banner");
-    const area = rows.reduce((s, x) => s + x.area, 0);
-    const printing = rows.reduce((s, x) => s + x.printing, 0);
-    const pasting = rows.reduce((s, x) => s + x.pasting, 0);
-    const total = printing + pasting;
-    const received = number("receivedAmount");
-
-    get("totalArea").textContent = area.toFixed(2);
-    get("printingAmount").textContent = money(printing);
-    get("pastingAmount").textContent = money(pasting);
-    get("bannerTotal").textContent = money(total);
-    get("balanceAmount").value = money(total - received);
-    get("finalBill").textContent = "Final Bill Amount: " + money(total);
-  }
-
-  function saveBannerOrder() {
-    const customer = value("customerName").trim();
-    const mobile = value("customerMobile").trim();
-    const file = value("customerFile").trim();
-    const rows = getBannerRows("bannerList", "banner");
-
-    if (!customer || !mobile || !file) {
-      alert("Customer Name, Mobile Number आणि File Name भरा.");
-      return;
+  function deleteRecord(key, recordId) {
+    if (!isAdmin()) {
+      return toast("Delete करण्याची परवानगी फक्त Admin ला आहे.");
     }
 
-    if (!/^[0-9]{10}$/.test(mobile)) {
-      alert("योग्य 10 अंकी Mobile Number टाका.");
-      return;
-    }
+    const actualKey = storageKey(key);
 
-    if (rows.some(x =>
-      x.width <= 0 || x.height <= 0 || x.quantity <= 0 || x.rate < 0 ||
-      (x.pastingRequired === "Yes" && x.pastingRate < 0)
-    )) {
-      alert("प्रत्येक Banner चे Size, Quantity आणि Rate तपासा.");
-      return;
-    }
+    if (!confirm("ही ऑर्डर कायमची Delete करायची आहे का?")) return;
 
-    const area = rows.reduce((s, x) => s + x.area, 0);
-    const printing = rows.reduce((s, x) => s + x.printing, 0);
-    const pasting = rows.reduce((s, x) => s + x.pasting, 0);
-    const total = printing + pasting;
-    const received = number("receivedAmount");
-
-    if (received < 0 || received > total) {
-      alert("Amount Received योग्य टाका.");
-      return;
-    }
-
-    const order = {
-      orderId: "PF-" + Date.now(),
-      customer,
-      mobile,
-      file,
-      banners: rows,
-      totalArea: area,
-      printingAmount: printing,
-      pastingAmount: pasting,
-      total,
-      received,
-      balance: total - received,
-      date: new Date().toISOString(),
-      status: "Saved"
-    };
-
-    if (saveData(KEYS.orders, order)) {
-      alert("Banner Order Successfully Saved!");
-      openDashboard();
-    }
-  }
-
-  // ==========================================
-  // JOB WORK
-  // ==========================================
-
-  function openJobWork() {
-    main.innerHTML = `
-      <div class="form-page">
-        <div class="form-header">
-          <button type="button" id="jwBack">← Back</button>
-          <h2>New Job Work</h2>
-        </div>
-
-        <div class="panel">
-          <h3>Customer Details</h3>
-          <div class="form-grid">
-            <div>
-              <label>Customer / Shop Name</label>
-              <input id="jwCustomer" type="text" placeholder="Enter customer name">
-            </div>
-            <div>
-              <label>Mobile Number</label>
-              <input id="jwMobile" type="tel" maxlength="10" placeholder="Mobile number">
-            </div>
-            <div>
-              <label>File Name</label>
-              <input id="jwFile" type="text" placeholder="Design / File name">
-            </div>
-          </div>
-        </div>
-
-        <div class="panel">
-          <div class="section-heading">
-            <h3>Job Work Banner Details</h3>
-            <button type="button" id="jwAddBanner">+ Add Banner</button>
-          </div>
-          <div id="jwBannerList"></div>
-        </div>
-
-        <div class="panel">
-          <h3>Job Work Summary</h3>
-          <div class="total-box">
-            <p>Total Square Feet: <strong id="jwArea">0</strong></p>
-            <p>Printing Amount: <strong id="jwPrinting">₹0.00</strong></p>
-            <p>Final Bill Amount: <strong id="jwTotal">₹0.00</strong></p>
-          </div>
-
-          <div class="form-grid">
-            <div>
-              <label>Amount Received</label>
-              <input id="jwReceived" type="number" min="0" value="0">
-            </div>
-            <div>
-              <label>Balance Amount</label>
-              <input id="jwBalance" type="text" readonly value="₹0.00">
-            </div>
-          </div>
-
-          <h2 id="jwFinalBill">Final Bill Amount: ₹0.00</h2>
-          <button type="button" id="saveJobWork">Save Job Work</button>
-          <button type="button" id="jwCancel">Cancel</button>
-        </div>
-      </div>
-    `;
-
-    addBannerRow("jwBannerList", "jobwork");
-
-    get("jwAddBanner").addEventListener("click", () =>
-      addBannerRow("jwBannerList", "jobwork")
+    const updated = read(actualKey).filter(x =>
+      String(x.orderId || x.jobWorkId) !== String(recordId)
     );
 
-    get("jwBannerList").addEventListener("input", calculateJobWork);
-    get("jwBannerList").addEventListener("change", calculateJobWork);
-    get("jwReceived").addEventListener("input", calculateJobWork);
-    get("saveJobWork").addEventListener("click", saveJobWork);
-    get("jwBack").addEventListener("click", openDashboard);
-    get("jwCancel").addEventListener("click", openDashboard);
+    write(actualKey, updated);
+
+    write(
+      KEYS.payments,
+      payments().filter(x => String(x.recordId) !== String(recordId))
+    );
+
+    toast("ऑर्डर Delete झाली.");
+    navigate(currentPage);
   }
 
-  function calculateJobWork() {
-    if (!get("jwBannerList")) return;
+  function recordActions(x) {
+    if (!isAdmin()) {
+      return `<td>—</td>`;
+    }
 
-    updateIndividualBannerSummary("jwBannerList", "jobwork");
+    const key = x.recordKey || (x.jobWorkId ? "jobs" : "orders");
+    const recordId = x.recordId || x.orderId || x.jobWorkId;
 
-    const rows = getBannerRows("jwBannerList", "jobwork");
-    const area = rows.reduce((s, x) => s + x.area, 0);
-    const total = rows.reduce((s, x) => s + x.printing, 0);
-    const received = number("jwReceived");
+    return `<td>
+      <button type="button" class="btn secondary small"
+        data-edit-record="${esc(recordId)}"
+        data-record-key="${key}">Edit</button>
 
-    get("jwArea").textContent = area.toFixed(2);
-    get("jwPrinting").textContent = money(total);
-    get("jwTotal").textContent = money(total);
-    get("jwBalance").value = money(total - received);
-    get("jwFinalBill").textContent = "Final Bill Amount: " + money(total);
+      <button type="button" class="btn danger small"
+        data-delete-record="${esc(recordId)}"
+        data-record-key="${key}">Delete</button>
+    </td>`;
   }
 
-  function saveJobWork() {
-    const customer = value("jwCustomer").trim();
-    const mobile = value("jwMobile").trim();
-    const file = value("jwFile").trim();
-    const rows = getBannerRows("jwBannerList", "jobwork");
+  content.addEventListener("click", e => {
+    const edit = e.target.closest("[data-edit-record]");
+    const del = e.target.closest("[data-delete-record]");
 
-    if (!customer || !mobile || !file) {
-      alert("Customer Name, Mobile Number आणि File Name भरा.");
+    if (edit) {
+      e.preventDefault();
+      editRecord(edit.dataset.recordKey, edit.dataset.editRecord);
       return;
     }
 
-    if (!/^[0-9]{10}$/.test(mobile)) {
-      alert("योग्य 10 अंकी Mobile Number टाका.");
-      return;
+    if (del) {
+      e.preventDefault();
+      deleteRecord(del.dataset.recordKey, del.dataset.deleteRecord);
+    }
+  });
+
+  function allRecords() {
+    return [
+      ...orders().map(x => ({
+        ...x,
+        type:"Banner Order",
+        recordKey:"orders",
+        recordId:x.orderId
+      })),
+      ...jobs().map(x => ({
+        ...x,
+        type:"Job Work",
+        recordKey:"jobs",
+        recordId:x.jobWorkId
+      }))
+    ];
+  }
+
+  function getTotal(x) {
+    return num(x.total);
+  }
+
+  function getReceived(x) {
+    return num(x.received);
+  }
+
+  function getDiscount(x) {
+    return num(x.discount);
+  }
+
+  function getBalance(x) {
+    if (x.balance !== undefined) return num(x.balance);
+    return Math.max(0, getTotal(x) - getReceived(x) - getDiscount(x));
+  }
+
+  function getStats() {
+    const records = allRecords();
+
+    return {
+      sales: records.reduce((s, x) => s + getTotal(x), 0),
+      received: records.reduce((s, x) => s + getReceived(x), 0),
+      discount: records.reduce((s, x) => s + getDiscount(x), 0),
+      due: records.reduce((s, x) => s + getBalance(x), 0),
+      expenses: expenses().reduce((s, x) => s + num(x.amount), 0),
+      count: records.length
+    };
+  }
+
+  function page(title, subtitle, html) {
+    $("#pageTitle").textContent = title;
+    $("#pageSubtitle").textContent = subtitle;
+    content.innerHTML = html;
+
+    if (!isAdmin()) {
+      if (currentPage === "payments" || currentPage === "expenses") {
+        $$(".form-card", content).forEach(form => form.remove());
+      }
+
+      $$("[data-edit-record], [data-delete-record], [data-delete-expense]", content)
+        .forEach(button => button.remove());
+
+      $$('[data-page="banner"], [data-page="jobwork"]', content)
+        .forEach(button => button.remove());
+
+      const paymentQuickButton = $('[data-page="payments"]', content);
+
+      if (paymentQuickButton && currentPage === "dashboard") {
+        paymentQuickButton.remove();
+      }
+    }
+  }
+
+  function navigate(name) {
+    if (!isAdmin() && (name === "banner" || name === "jobwork")) {
+      return toast("ही सुविधा फक्त Admin साठी आहे.");
     }
 
-    if (rows.some(x =>
-      x.width <= 0 || x.height <= 0 || x.quantity <= 0 || x.rate < 0
-    )) {
-      alert("प्रत्येक Banner चे Size, Quantity आणि Rate तपासा.");
-      return;
-    }
+    currentPage = name;
 
-    const area = rows.reduce((s, x) => s + x.area, 0);
-    const total = rows.reduce((s, x) => s + x.printing, 0);
-    const received = number("jwReceived");
+    $$(".sidebar nav a").forEach(a => {
+      a.classList.toggle("active", a.dataset.page === name);
+    });
 
-    if (received < 0 || received > total) {
-      alert("Amount Received योग्य टाका.");
-      return;
-    }
-
-    const jobWork = {
-      jobWorkId: "JW-" + Date.now(),
-      customer,
-      mobile,
-      file,
-      banners: rows,
-      totalArea: area,
-      printingAmount: total,
-      total,
-      received,
-      balance: total - received,
-      date: new Date().toISOString(),
-      status: "Saved"
+    const pages = {
+      dashboard: renderDashboard,
+      banner: renderBanner,
+      jobwork: renderJobWork,
+      customers: renderCustomers,
+      payments: renderPayments,
+      expenses: renderExpenses,
+      orders: renderOrders,
+      reports: renderReports
     };
 
-    if (saveData(KEYS.jobs, jobWork)) {
-      alert("Job Work Successfully Saved!");
-      openDashboard();
-    }
+    (pages[name] || renderDashboard)();
   }
 
-  // ==========================================
-  // EXPENSE MANAGEMENT
-  // ==========================================
+  document.addEventListener("click", e => {
+    const link = e.target.closest("[data-page]");
 
-  function openExpenses(editId = null) {
-    const expenses = readData(KEYS.expenses);
-    const editing = expenses.find(x => x.expenseId === editId);
+    if (link) {
+      e.preventDefault();
+      navigate(link.dataset.page);
+    }
+  });
 
-    main.innerHTML = `
-      <div class="form-page">
-        <div class="form-header">
-          <button type="button" id="expenseBack">← Back</button>
-          <h2>${editing ? "Edit Expense" : "Expenses Management"}</h2>
-        </div>
+  $("#todayDate").textContent = new Date().toLocaleDateString("en-IN", {
+    day:"2-digit",
+    month:"short",
+    year:"numeric"
+  });
 
+  function statCard(label, value, icon, cls = "") {
+    return `<div class="stat-card ${cls}">
+      <span class="stat-icon">${icon}</span>
+      <div class="stat-label">${label}</div>
+      <h2>${value}</h2>
+      <small>All time overview</small>
+    </div>`;
+  }
+
+  function monthlySales() {
+    const result = [];
+    const now = new Date();
+
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const month = d.getMonth();
+      const year = d.getFullYear();
+
+      const total = allRecords()
+        .filter(x => {
+          const dt = new Date((x.date || today()) + "T00:00:00");
+          return dt.getMonth() === month &&
+                 dt.getFullYear() === year;
+        })
+        .reduce((s, x) => s + getTotal(x), 0);
+
+      result.push({
+        label: d.toLocaleDateString("en-IN", {month:"short"}),
+        value: total
+      });
+    }
+
+    return result;
+  }
+
+  function salesChart() {
+    const data = monthlySales();
+
+    if (!data.some(x => x.value > 0)) {
+      return `<div class="chart-empty">
+        अजून Sales Data उपलब्ध नाही.<br>
+        ऑर्डर सेव्ह झाल्यानंतर चार्ट दिसेल.
+      </div>`;
+    }
+
+    const max = Math.max(...data.map(x => x.value), 1);
+
+    const points = data.map((x, i) => {
+      const px = 25 + i * 65;
+      const py = 180 - (x.value / max) * 145;
+      return `${px},${py}`;
+    }).join(" ");
+
+    const circles = data.map((x, i) => {
+      const px = 25 + i * 65;
+      const py = 180 - (x.value / max) * 145;
+
+      return `<circle cx="${px}" cy="${py}" r="4" fill="#2864df"/>
+        <text x="${px}" y="210" text-anchor="middle"
+          font-size="10" fill="#77839a">${esc(x.label)}</text>`;
+    }).join("");
+
+    const labels = data.map((x, i) => {
+      const px = 25 + i * 65;
+      const py = 180 - (x.value / max) * 145 - 12;
+
+      return `<text x="${px}" y="${py}" text-anchor="middle"
+        font-size="8" fill="#52617a">${esc(money(x.value))}</text>`;
+    }).join("");
+
+    return `<svg viewBox="0 0 370 225" role="img" aria-label="Monthly sales chart">
+      <line x1="15" y1="180" x2="355" y2="180" stroke="#e6ebf3"/>
+      <line x1="15" y1="105" x2="355" y2="105" stroke="#edf0f5" stroke-dasharray="4 4"/>
+      <line x1="15" y1="35" x2="355" y2="35" stroke="#edf0f5" stroke-dasharray="4 4"/>
+      <polyline points="${points}" fill="none" stroke="#2864df"
+        stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+      ${circles}${labels}
+    </svg>`;
+  }
+
+  function recentTable() {
+    const rows = allRecords()
+      .sort((a,b) => (b.date || "").localeCompare(a.date || ""))
+      .slice(0, 6);
+
+    return `<div class="table-wrap"><table>
+      <thead><tr>
+        <th>ORDER ID</th>
+        <th>CUSTOMER</th>
+        <th>TYPE</th>
+        <th>DATE</th>
+        <th>TOTAL</th>
+        <th>BALANCE</th>
+        <th>ACTION</th>
+      </tr></thead>
+      <tbody>${rows.length ? rows.map(x => `<tr>
+        <td>${esc(x.orderId || x.jobWorkId)}</td>
+        <td>${esc(x.customer)}</td>
+        <td>${esc(x.type)}</td>
+        <td>${dateText(x.date)}</td>
+        <td>${money(getTotal(x))}</td>
+        <td>${money(getBalance(x))}</td>
+        ${recordActions(x)}
+      </tr>`).join("") : `
+        <tr><td colspan="7" class="empty">अजून ऑर्डर्स नाहीत.</td></tr>
+      `}</tbody>
+    </table></div>`;
+  }
+
+  function renderDashboard() {
+    const s = getStats();
+
+    page("Dashboard", "Your business at a glance", `
+      <div class="welcome">
+        <h2>Welcome to KADAM DIGITAL</h2>
+        <p>Manage your printing business, orders, payments and expenses in one place.</p>
+      </div>
+
+      <div class="stats-grid">
+        ${statCard("Total Sales", money(s.sales), "₹")}
+        ${statCard("Amount Received", money(s.received), "✓", "green")}
+        ${statCard("Pending Balance", money(s.due), "!", "orange")}
+        ${statCard("Total Expenses", money(s.expenses), "↗", "red")}
+      </div>
+
+      <div class="dashboard-grid">
         <div class="panel">
-          <h3>${editing ? "Update Expense" : "Add New Expense"}</h3>
-
-          <div class="form-grid">
-            <div>
-              <label>Expense Category</label>
-              <select id="expenseCategory">
-                ${EXPENSE_CATEGORIES.map(x =>
-                  `<option value="${safe(x)}" ${editing?.category === x ? "selected" : ""}>${safe(x)}</option>`
-                ).join("")}
-              </select>
-            </div>
-
-            <div>
-              <label>Description</label>
-              <input id="expenseDescription" type="text"
-                placeholder="Enter expense details"
-                value="${safe(editing?.description || "")}">
-            </div>
-
-            <div>
-              <label>Amount</label>
-              <input id="expenseAmount" type="number" min="0.01" step="0.01"
-                placeholder="Enter amount"
-                value="${editing?.amount ?? ""}">
-            </div>
-
-            <div>
-              <label>Payment Mode</label>
-              <select id="expenseMode">
-                ${["Cash", "UPI", "Bank Transfer", "Other"].map(x =>
-                  `<option value="${x}" ${editing?.method === x ? "selected" : ""}>${x}</option>`
-                ).join("")}
-              </select>
-            </div>
-
-            <div>
-              <label>Expense Date</label>
-              <input id="expenseDate" type="date"
-                value="${editing ? dateOf(editing) : localDate()}">
-            </div>
-
-            <div>
-              <label>Remark</label>
-              <input id="expenseRemark" type="text"
-                placeholder="Optional remark"
-                value="${safe(editing?.remark || "")}">
-            </div>
+          <div class="panel-head">
+            <h3>Sales Overview</h3>
+            <small>Last 6 months · Actual saved sales</small>
           </div>
-
-          <button type="button" id="saveExpense">
-            ${editing ? "Update Expense" : "Save Expense"}
-          </button>
-          <button type="button" id="cancelExpense">Cancel</button>
+          <div class="chart-wrap">${salesChart()}</div>
         </div>
 
         <div class="panel">
-          <h3>Expense History</h3>
-          <div style="overflow-x:auto">
-            <table style="width:100%;border-collapse:collapse">
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Category</th>
-                  <th>Description</th>
-                  <th>Amount</th>
-                  <th>Mode</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody id="expenseRows"></tbody>
-            </table>
+          <div class="panel-head"><h3>Quick Actions</h3></div>
+          <div class="quick-grid">
+            <button class="quick-btn" data-page="banner"><span>▣</span>New Banner Order</button>
+            <button class="quick-btn" data-page="jobwork"><span>▤</span>New Job Work</button>
+            <button class="quick-btn" data-page="payments"><span>₹</span>Receive Payment</button>
+            <button class="quick-btn" data-page="reports"><span>▥</span>View Reports</button>
+            <button class="quick-btn" data-page="expenses"><span>↗</span>Expenses</button>
           </div>
         </div>
       </div>
-    `;
 
-    renderExpenseRows();
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Recent Orders</h3>
+          <button class="btn secondary small" data-page="orders">View All</button>
+        </div>
+        ${recentTable()}
+      </div>
+    `);
+  }
 
-    get("expenseBack").addEventListener("click", openDashboard);
-    get("cancelExpense").addEventListener("click", openExpenses);
+  // =========================================
+  // BANNER ROW
+  // =========================================
 
-    get("saveExpense").addEventListener("click", function () {
-      const category = value("expenseCategory");
-      const description = value("expenseDescription").trim();
-      const amount = number("expenseAmount");
-      const method = value("expenseMode");
-      const date = value("expenseDate");
-      const remark = value("expenseRemark").trim();
+  function bannerRow(index, job = false) {
+    return `<div class="banner-card" data-banner>
+      <div class="banner-card-head">
+        <strong>Banner ${index}</strong>
+        <button type="button" class="btn danger small" data-remove-banner>Remove</button>
+      </div>
 
-      if (!EXPENSE_CATEGORIES.includes(category)) {
-        alert("योग्य Expense Category निवडा.");
-        return;
+      <div class="banner-grid">
+        <div class="field">
+          <label>Media / Material</label>
+          <select data-field="media" required>
+            <option value="">Select Material</option>
+            <option value="China">China</option>
+            <option value="Star">Star</option>
+            <option value="Backlight">Backlight</option>
+            <option value="Black Back">Black Back</option>
+            <option value="One Way">One Way</option>
+            <option value="Vinyl">Vinyl</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Width (Feet)</label>
+          <input type="number" min="0" step="0.01" data-field="width" placeholder="Width">
+        </div>
+
+        <div class="field">
+          <label>Height (Feet)</label>
+          <input type="number" min="0" step="0.01" data-field="height" placeholder="Height">
+        </div>
+
+        <div class="field">
+          <label>Quantity</label>
+          <input type="number" min="1" step="1" value="1" data-field="quantity">
+        </div>
+
+        <div class="field">
+          <label>Printing Rate / Sq.Ft</label>
+          <input type="number" min="0" step="0.01" data-field="rate" placeholder="Rate">
+        </div>
+
+        ${job ? "" : `
+          <div class="field">
+            <label>Pasting</label>
+            <select data-field="pasting">
+              <option value="no">No</option>
+              <option value="yes">Yes</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label>Pasting Rate / Sq.Ft</label>
+            <input type="number" min="0" step="0.01" data-field="pastingRate" value="0">
+          </div>
+        `}
+      </div>
+
+      <div class="banner-result">
+        <span>Area: <strong data-area>0 Sq.Ft</strong></span>
+        <span>Printing: <strong data-printing>₹0.00</strong></span>
+        ${job ? "" : `<span>Pasting: <strong data-pasting>₹0.00</strong></span>`}
+        <span>Banner Amount: <strong data-amount>₹0.00</strong></span>
+      </div>
+    </div>`;
+  }
+
+  function calculateBanner(card, job = false) {
+    const getv = name => num($(`[data-field="${name}"]`, card)?.value);
+
+    const area = getv("width") * getv("height") * getv("quantity");
+    const printing = area * getv("rate");
+
+    const pasting = !job &&
+      $(`[data-field="pasting"]`, card)?.value === "yes"
+      ? area * getv("pastingRate")
+      : 0;
+
+    const amount = printing + pasting;
+
+    $("[data-area]", card).textContent = area.toFixed(2) + " Sq.Ft";
+    $("[data-printing]", card).textContent = money(printing);
+
+    if (!job) {
+      $("[data-pasting]", card).textContent = money(pasting);
+    }
+
+    $("[data-amount]", card).textContent = money(amount);
+
+    return {
+      media:$(`[data-field="media"]`, card).value,
+      width:getv("width"),
+      height:getv("height"),
+      quantity:getv("quantity"),
+      rate:getv("rate"),
+      area,
+      printing,
+      pasting,
+      pastingRate:getv("pastingRate"),
+      amount
+    };
+  }
+
+  // =========================================
+  // NEW BANNER ORDER / JOB WORK
+  // =========================================
+
+  function renderOrderForm(job = false) {
+    if (!isAdmin()) {
+      return toast("ही सुविधा फक्त Admin साठी आहे.");
+    }
+
+    const title = job ? "New Job Work" : "New Banner Order";
+    const subtitle = job
+      ? "Create a new job work entry"
+      : "Create a new banner order";
+
+    const recordPrefix = job ? "jobWorkId" : "orderId";
+
+    page(title, subtitle, `
+      <form id="orderForm" class="form-card">
+        <h3>Customer Details</h3>
+
+        <div class="form-grid">
+          <div class="field">
+            <label>Customer Name *</label>
+            <input name="customer" required placeholder="Customer name">
+          </div>
+
+          <div class="field">
+            <label>Mobile Number</label>
+            <input name="mobile" inputmode="numeric" placeholder="Mobile number">
+          </div>
+
+          <div class="field">
+            <label>Order Date</label>
+            <input name="date" type="date" value="${today()}" required>
+          </div>
+
+          <div class="field full">
+            <label>File / Design Details</label>
+            <input name="file" placeholder="File name or design details">
+          </div>
+        </div>
+
+        <div class="form-section-title">Banner Details</div>
+        <div id="bannerRows">${bannerRow(1, job)}</div>
+
+        <button type="button" class="btn secondary" id="addBanner">
+          + Add Another Banner
+        </button>
+
+        <div class="summary">
+          <div class="summary-row">
+            <span>Total Area</span>
+            <strong id="totalArea">0 Sq.Ft</strong>
+          </div>
+
+          <div class="summary-row">
+            <span>Printing Amount</span>
+            <strong id="printingAmount">${money(0)}</strong>
+          </div>
+
+          ${job ? "" : `
+            <div class="summary-row">
+              <span>Pasting Amount</span>
+              <strong id="pastingAmount">${money(0)}</strong>
+            </div>
+          `}
+
+          <div class="summary-row total">
+            <span>Banner Total</span>
+            <strong id="grossTotal">${money(0)}</strong>
+          </div>
+
+          ${job ? "" : `
+            <div class="summary-row discount-row">
+              <span>Discount</span>
+              <strong id="discountDisplay">${money(0)}</strong>
+            </div>
+          `}
+
+          <div class="summary-row">
+            <span>Amount Received</span>
+            <strong id="receivedDisplay">${money(0)}</strong>
+          </div>
+
+          <div class="summary-row balance">
+            <span>Remaining Balance</span>
+            <strong id="balanceDisplay">${money(0)}</strong>
+          </div>
+        </div>
+
+        <div class="form-grid" style="margin-top:16px">
+          ${job ? "" : `
+            <div class="field">
+              <label>Discount (₹)</label>
+              <input type="number" name="discount" min="0" step="0.01" value="0">
+            </div>
+          `}
+
+          <div class="field">
+            <label>Amount Received (₹)</label>
+            <input type="number" name="received" min="0" step="0.01" value="0">
+          </div>
+        </div>
+
+        <div class="form-footer">
+          <button type="reset" class="btn secondary">Reset</button>
+          <button type="submit" class="btn">
+            Save ${job ? "Job Work" : "Order"}
+          </button>
+        </div>
+      </form>
+    `);
+
+    const form = $("#orderForm");
+    const rows = $("#bannerRows");
+
+    function refresh() {
+      const cards = $$("[data-banner]", rows);
+      const items = cards.map(card => calculateBanner(card, job));
+
+      const area = items.reduce((s,x) => s + x.area, 0);
+      const printing = items.reduce((s,x) => s + x.printing, 0);
+      const pasting = items.reduce((s,x) => s + x.pasting, 0);
+      const gross = items.reduce((s,x) => s + x.amount, 0);
+
+      const discount = job ? 0 : num(form.elements.discount.value);
+      const received = num(form.elements.received.value);
+      const balance = Math.max(0, gross - discount - received);
+
+      $("#totalArea").textContent = area.toFixed(2) + " Sq.Ft";
+      $("#printingAmount").textContent = money(printing);
+
+      if (!job) {
+        $("#pastingAmount").textContent = money(pasting);
+        $("#discountDisplay").textContent = money(discount);
       }
 
-      if (!description) {
-        alert("Description भरा.");
-        return;
-      }
+      $("#grossTotal").textContent = money(gross);
+      $("#receivedDisplay").textContent = money(received);
+      $("#balanceDisplay").textContent = money(balance);
 
-      if (amount <= 0) {
-        alert("योग्य Expense Amount टाका.");
-        return;
-      }
+      return {
+        items,
+        area,
+        printing,
+        pasting,
+        gross,
+        discount,
+        received,
+        balance
+      };
+    }
 
-      if (!date) {
-        alert("Expense Date निवडा.");
-        return;
-      }
+    rows.addEventListener("input", refresh);
+    rows.addEventListener("change", refresh);
+    form.addEventListener("input", refresh);
 
-      const all = readData(KEYS.expenses);
+    $("#addBanner").addEventListener("click", () => {
+      if (!isAdmin()) return toast("परवानगी नाही.");
 
-      if (editing) {
-        const index = all.findIndex(x => x.expenseId === editId);
-        if (index === -1) {
-          alert("Expense सापडला नाही.");
-          return;
+      rows.insertAdjacentHTML(
+        "beforeend",
+        bannerRow($$("[data-banner]", rows).length + 1, job)
+      );
+
+      refresh();
+    });
+
+    rows.addEventListener("click", e => {
+      if (e.target.closest("[data-remove-banner]")) {
+        if (!isAdmin()) return toast("परवानगी नाही.");
+
+        const cards = $$("[data-banner]", rows);
+
+        if (cards.length <= 1) {
+          return toast("किमान एक Banner आवश्यक आहे.");
         }
 
-        all[index] = {
-          ...all[index],
-          category,
-          description,
-          amount,
-          method,
-          date,
-          remark
-        };
-      } else {
-        all.push({
-          expenseId: "EXP-" + Date.now(),
-          category,
-          description,
-          amount,
-          method,
-          date,
-          remark,
-          createdAt: new Date().toISOString()
+        e.target.closest("[data-banner]").remove();
+
+        $$("[data-banner]", rows).forEach((card,i) => {
+          $("strong", card).textContent = "Banner " + (i + 1);
+        });
+
+        refresh();
+      }
+    });
+
+    form.addEventListener("reset", () => {
+      setTimeout(refresh, 0);
+    });
+
+    form.addEventListener("submit", e => {
+      e.preventDefault();
+
+      if (!isAdmin()) return toast("Save करण्याची परवानगी फक्त Admin ला आहे.");
+
+      const result = refresh();
+      const customer = form.elements.customer.value.trim();
+
+      if (!customer) return toast("Customer Name आवश्यक आहे.");
+      if (result.gross <= 0) return toast("कृपया Banner Size आणि Rate भरा.");
+
+      if (result.items.some(x => !x.media)) {
+        return toast("प्रत्येक Banner साठी Material निवडा.");
+      }
+
+      if (result.received + result.discount > result.gross + 0.001) {
+        return toast("Received + Discount हे Total पेक्षा जास्त असू शकत नाही.");
+      }
+
+      const record = {
+        [recordPrefix]:id(job ? "JW" : "PF"),
+        customer,
+        mobile:form.elements.mobile.value.trim(),
+        file:form.elements.file.value.trim(),
+        banners:result.items,
+        totalArea:result.area,
+        printingAmount:result.printing,
+        pastingAmount:result.pasting,
+        total:result.gross,
+        received:result.received,
+        discount:result.discount,
+        balance:result.balance,
+        date:form.elements.date.value,
+        status:result.balance <= 0 ? "Paid" : "Pending"
+      };
+
+      const key = job ? KEYS.jobs : KEYS.orders;
+      const data = read(key);
+
+      data.push(record);
+
+      if (!write(key, data)) return;
+
+      toast(job ? "Job Work सेव्ह झाले!" : "Banner Order सेव्ह झाली!");
+
+      navigate("dashboard");
+    });
+
+    refresh();
+  }
+
+  function renderBanner() {
+    renderOrderForm(false);
+  }
+
+  function renderJobWork() {
+    renderOrderForm(true);
+  }
+
+  // =========================================
+  // COMMON RECORD TABLE
+  // =========================================
+
+  function recordTable(records, includeType = true) {
+    if (!records.length) {
+      return `<div class="empty">रेकॉर्ड उपलब्ध नाहीत.</div>`;
+    }
+
+    return `<div class="table-wrap"><table>
+      <thead><tr>
+        <th>ID</th>
+        <th>Customer</th>
+        ${includeType ? "<th>Type</th>" : ""}
+        <th>Date</th>
+        <th>Total</th>
+        <th>Received</th>
+        <th>Discount</th>
+        <th>Balance</th>
+        <th>Status</th>
+        <th>Action</th>
+      </tr></thead>
+
+      <tbody>${records.map(x => `<tr>
+        <td>${esc(x.orderId || x.jobWorkId)}</td>
+        <td>${esc(x.customer)}</td>
+        ${includeType ? `<td>${esc(x.type)}</td>` : ""}
+        <td>${dateText(x.date)}</td>
+        <td>${money(getTotal(x))}</td>
+        <td>${money(getReceived(x))}</td>
+        <td>${money(getDiscount(x))}</td>
+        <td>${money(getBalance(x))}</td>
+        <td>
+          <span class="badge ${getBalance(x) <= 0 ? "paid" : "pending"}">
+            ${getBalance(x) <= 0 ? "Paid" : "Pending"}
+          </span>
+        </td>
+        ${recordActions(x)}
+      </tr>`).join("")}</tbody>
+    </table></div>`;
+  }
+
+  // =========================================
+  // ALL ORDERS
+  // =========================================
+
+  function renderOrders() {
+    page("All Orders", "All Banner Orders and Job Work records", `
+      <div class="page-actions">
+        <h2>All Orders</h2>
+
+        <div class="btn-row">
+          <button class="btn secondary" data-page="banner">+ Banner Order</button>
+          <button class="btn" data-page="jobwork">+ Job Work</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="search-row">
+          <input class="filter-input" id="orderSearch"
+            placeholder="Search customer, mobile or order ID">
+        </div>
+
+        <div id="orderTable">
+          ${recordTable(
+            allRecords().sort((a,b) => (b.date || "").localeCompare(a.date || ""))
+          )}
+        </div>
+      </div>
+    `);
+
+    $("#orderSearch").addEventListener("input", e => {
+      const q = e.target.value.toLowerCase();
+
+      const found = allRecords()
+        .filter(x =>
+          [
+            x.customer,
+            x.mobile,
+            x.orderId,
+            x.jobWorkId
+          ].join(" ").toLowerCase().includes(q)
+        )
+        .sort((a,b) => (b.date || "").localeCompare(a.date || ""));
+
+      $("#orderTable").innerHTML = recordTable(found);
+    });
+  }
+
+  // =========================================
+  // CUSTOMERS
+  // =========================================
+
+  function renderCustomers() {
+    const map = new Map();
+
+    allRecords().forEach(x => {
+      const key = x.mobile || String(x.customer || "").toLowerCase();
+
+      if (!map.has(key)) {
+        map.set(key, {
+          name:x.customer,
+          mobile:x.mobile,
+          count:0,
+          total:0,
+          received:0,
+          discount:0,
+          balance:0
         });
       }
 
-      if (writeData(KEYS.expenses, all)) {
-        alert(editing ? "Expense Updated!" : "Expense Saved!");
-        openExpenses();
-      }
+      const c = map.get(key);
+
+      c.count++;
+      c.total += getTotal(x);
+      c.received += getReceived(x);
+      c.discount += getDiscount(x);
+      c.balance += getBalance(x);
+    });
+
+    const list = [...map.values()];
+
+    page("Customers", "Customer list and account summary", `
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Customer Records (${list.length})</h3>
+        </div>
+
+        <div class="search-row">
+          <input class="filter-input" id="customerSearch"
+            placeholder="Search customer or mobile">
+        </div>
+
+        <div id="customerTable">${customerTable(list)}</div>
+      </div>
+    `);
+
+    $("#customerSearch").addEventListener("input", e => {
+      const q = e.target.value.toLowerCase();
+
+      $("#customerTable").innerHTML = customerTable(
+        list.filter(x =>
+          (x.name + " " + x.mobile).toLowerCase().includes(q)
+        )
+      );
     });
   }
 
-  function renderExpenseRows() {
-    const body = get("expenseRows");
-    if (!body) return;
+  function customerTable(list) {
+    if (!list.length) {
+      return `<div class="empty">Customer records उपलब्ध नाहीत.</div>`;
+    }
 
-    const expenses = readData(KEYS.expenses)
-      .sort((a, b) => dateOf(b).localeCompare(dateOf(a)));
+    return `<div class="table-wrap"><table>
+      <thead><tr>
+        <th>Customer</th>
+        <th>Mobile</th>
+        <th>Orders</th>
+        <th>Total Sales</th>
+        <th>Received</th>
+        <th>Balance</th>
+      </tr></thead>
 
-    body.innerHTML = expenses.length ? expenses.map(x => `
-      <tr>
-        <td>${formatDate(dateOf(x))}</td>
-        <td>${safe(x.category)}</td>
-        <td>${safe(x.description)}</td>
-        <td>${money(x.amount)}</td>
-        <td>${safe(x.method)}</td>
-        <td>
-          <button type="button" data-edit-expense="${safe(x.expenseId)}">Edit</button>
-          <button type="button" data-delete-expense="${safe(x.expenseId)}">Delete</button>
-        </td>
-      </tr>
-    `).join("") : `
-      <tr><td colspan="6">No expenses recorded.</td></tr>
-    `;
+      <tbody>${list.map(x => `<tr>
+        <td>${esc(x.name)}</td>
+        <td>${esc(x.mobile || "-")}</td>
+        <td>${x.count}</td>
+        <td>${money(x.total)}</td>
+        <td>${money(x.received)}</td>
+        <td>${money(x.balance)}</td>
+      </tr>`).join("")}</tbody>
+    </table></div>`;
+  }
 
-    body.querySelectorAll("[data-edit-expense]").forEach(button => {
-      button.addEventListener("click", () =>
-        openExpenses(button.dataset.editExpense)
+  // =========================================
+  // PAYMENTS
+  // =========================================
+
+  function renderPayments() {
+    const pending = allRecords().filter(x => getBalance(x) > 0);
+    const history = payments().slice().reverse();
+
+    page("Payments", "Receive outstanding payments and manage discounts", `
+      ${isAdmin() ? `
+      <div class="form-card">
+        <h3>Receive Payment / Apply Discount</h3>
+
+        <form id="paymentForm">
+          <div class="form-grid">
+            <div class="field full">
+              <label>Select Order / Job Work *</label>
+
+              <select name="record" required>
+                <option value="">Select customer order</option>
+
+                ${pending.map(x => `<option value="${esc(x.recordKey)}|${esc(x.recordId)}">
+                  ${esc(x.customer)} — ${esc(x.orderId || x.jobWorkId)}
+                  — Balance ${money(getBalance(x))}
+                </option>`).join("")}
+              </select>
+            </div>
+
+            <div class="field">
+              <label>Amount Received Now (₹)</label>
+              <input name="amount" type="number" min="0" step="0.01" value="0">
+            </div>
+
+            <div class="field">
+              <label>Discount Given Now (₹)</label>
+              <input name="discount" type="number" min="0" step="0.01" value="0">
+            </div>
+
+            <div class="field">
+              <label>Payment Date</label>
+              <input name="date" type="date" value="${today()}">
+            </div>
+
+            <div class="field">
+              <label>Payment Mode</label>
+              <select name="mode">
+                <option>Cash</option>
+                <option>UPI</option>
+                <option>Bank</option>
+                <option>Other</option>
+              </select>
+            </div>
+          </div>
+
+          <div id="paymentInfo" class="summary">
+            <div class="empty">ऑर्डर निवडल्यानंतर तपशील दिसेल.</div>
+          </div>
+
+          <div class="form-footer">
+            <button class="btn" type="submit">Save Payment</button>
+          </div>
+        </form>
+      </div>
+      ` : ""}
+
+      <div class="panel">
+        <div class="panel-head"><h3>Payment History</h3></div>
+        ${paymentTable(history)}
+      </div>
+    `);
+
+    if (!isAdmin()) return;
+
+    const form = $("#paymentForm");
+
+    form.elements.record.addEventListener("change", () => {
+      const value = form.elements.record.value;
+
+      if (!value) {
+        $("#paymentInfo").innerHTML =
+          `<div class="empty">ऑर्डर निवडल्यानंतर तपशील दिसेल.</div>`;
+        return;
+      }
+
+      const [key, recordId] = value.split("|");
+      const actualKey = storageKey(key);
+
+      const selected = read(actualKey).find(x =>
+        String(x.orderId || x.jobWorkId) === String(recordId)
       );
+
+      if (!selected) {
+        $("#paymentInfo").innerHTML =
+          `<div class="empty">ऑर्डर सापडली नाही.</div>`;
+        return;
+      }
+
+      $("#paymentInfo").innerHTML = `
+        <div class="summary-row">
+          <span>Customer</span>
+          <strong>${esc(selected.customer)}</strong>
+        </div>
+
+        <div class="summary-row">
+          <span>Original Bill Total</span>
+          <strong>${money(getTotal(selected))}</strong>
+        </div>
+
+        <div class="summary-row">
+          <span>Already Received</span>
+          <strong>${money(getReceived(selected))}</strong>
+        </div>
+
+        <div class="summary-row discount-row">
+          <span>Existing Discount</span>
+          <strong>${money(getDiscount(selected))}</strong>
+        </div>
+
+        <div class="summary-row balance">
+          <span>Current Balance</span>
+          <strong>${money(getBalance(selected))}</strong>
+        </div>
+      `;
     });
 
-    body.querySelectorAll("[data-delete-expense]").forEach(button => {
-      button.addEventListener("click", () => {
-        const id = button.dataset.deleteExpense;
+    form.addEventListener("submit", e => {
+      e.preventDefault();
 
-        if (!confirm("हा Expense Delete करायचा आहे का?")) return;
+      if (!isAdmin()) {
+        return toast("Payment सेव्ह करण्याची परवानगी फक्त Admin ला आहे.");
+      }
 
-        const updated = readData(KEYS.expenses)
-          .filter(x => x.expenseId !== id);
+      const value = form.elements.record.value;
 
-        if (writeData(KEYS.expenses, updated)) {
-          openExpenses();
+      if (!value) return toast("ऑर्डर निवडा.");
+
+      const [key, recordId] = value.split("|");
+      const actualKey = storageKey(key);
+
+      if (!recordId || ![KEYS.orders, KEYS.jobs].includes(actualKey)) {
+        return toast("योग्य ऑर्डर निवडा.");
+      }
+
+      const data = read(actualKey);
+
+      const index = data.findIndex(x =>
+        String(x.orderId || x.jobWorkId) === String(recordId)
+      );
+
+      if (index < 0) return toast("ऑर्डर सापडली नाही.");
+
+      const record = data[index];
+      const amount = num(form.elements.amount.value);
+      const discountNow = num(form.elements.discount.value);
+      const balance = getBalance(record);
+
+      if (amount <= 0 && discountNow <= 0) {
+        return toast("पेमेंट किंवा Discount रक्कम भरा.");
+      }
+
+      if (amount + discountNow > balance + 0.001) {
+        return toast("Payment + Discount हे Balance पेक्षा जास्त असू शकत नाही.");
+      }
+
+      record.received = getReceived(record) + amount;
+      record.discount = getDiscount(record) + discountNow;
+
+      record.balance = Math.max(
+        0,
+        getTotal(record) - record.received - record.discount
+      );
+
+      record.status = record.balance <= 0 ? "Paid" : "Pending";
+
+      data[index] = record;
+
+      if (!write(actualKey, data)) return;
+
+      const history = payments();
+
+      history.push({
+        paymentId:id("PAY"),
+        recordId,
+        customer:record.customer,
+        amount,
+        discount:discountNow,
+        mode:form.elements.mode.value,
+        date:form.elements.date.value || today(),
+        type:actualKey === KEYS.jobs ? "Job Work" : "Banner Order"
+      });
+
+      if (!write(KEYS.payments, history)) return;
+
+      toast("Payment / Discount सेव्ह झाले!");
+      renderPayments();
+    });
+  }
+
+  function paymentTable(list) {
+    if (!list.length) {
+      return `<div class="empty">Payment history उपलब्ध नाही.</div>`;
+    }
+
+    return `<div class="table-wrap"><table>
+      <thead><tr>
+        <th>Payment ID</th>
+        <th>Customer</th>
+        <th>Order ID</th>
+        <th>Date</th>
+        <th>Mode</th>
+        <th>Amount</th>
+        <th>Discount</th>
+      </tr></thead>
+
+      <tbody>${list.map(x => `<tr>
+        <td>${esc(x.paymentId)}</td>
+        <td>${esc(x.customer)}</td>
+        <td>${esc(x.recordId)}</td>
+        <td>${dateText(x.date)}</td>
+        <td>${esc(x.mode)}</td>
+        <td>${money(x.amount)}</td>
+        <td>${money(x.discount || 0)}</td>
+      </tr>`).join("")}</tbody>
+    </table></div>`;
+  }
+
+  // =========================================
+  // EXPENSES
+  // =========================================
+
+  function renderExpenses() {
+    const list = expenses().slice().reverse();
+
+    page("Expenses", "Manage shop expenses", `
+      ${isAdmin() ? `
+      <div class="form-card">
+        <h3>Add New Expense</h3>
+
+        <form id="expenseForm">
+          <div class="form-grid">
+            <div class="field">
+              <label>Category *</label>
+              <select name="category" required>
+                <option value="Material">Material</option>
+                <option value="Printing">Printing</option>
+                <option value="Electricity">Electricity</option>
+                <option value="Rent">Rent</option>
+                <option value="Transport">Transport</option>
+                <option value="Salary">Salary</option>
+                <option value="Maintenance">Maintenance</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label>Description *</label>
+              <input name="description" required placeholder="Expense details">
+            </div>
+
+            <div class="field">
+              <label>Amount (₹) *</label>
+              <input name="amount" type="number" min="0.01" step="0.01" required>
+            </div>
+
+            <div class="field">
+              <label>Payment Mode</label>
+              <select name="mode">
+                <option>Cash</option>
+                <option>UPI</option>
+                <option>Bank</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label>Date</label>
+              <input name="date" type="date" value="${today()}">
+            </div>
+
+            <div class="field">
+              <label>Remark</label>
+              <input name="remark" placeholder="Optional">
+            </div>
+          </div>
+
+          <div class="form-footer">
+            <button class="btn">Save Expense</button>
+          </div>
+        </form>
+      </div>
+      ` : ""}
+
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Expense History</h3>
+          <div class="btn-row">
+            <strong>${money(list.reduce((s,x) => s + num(x.amount), 0))}</strong>
+            <button class="btn small" id="printExpenses">Print Report</button>
+          </div>
+        </div>
+
+        <div class="table-wrap"><table>
+          <thead><tr>
+            <th>Date</th>
+            <th>Category</th>
+            <th>Description</th>
+            <th>Mode</th>
+            <th>Amount</th>
+            ${isAdmin() ? "<th>Action</th>" : ""}
+          </tr></thead>
+
+          <tbody>${list.length ? list.map(x => `<tr>
+            <td>${dateText(x.date)}</td>
+            <td>${esc(x.category)}</td>
+            <td>${esc(x.description)}</td>
+            <td>${esc(x.mode)}</td>
+            <td>${money(x.amount)}</td>
+            ${isAdmin() ? `
+            <td>
+              <button type="button" class="btn danger small"
+                data-delete-expense="${esc(x.expenseId)}">Delete</button>
+            </td>` : ""}
+          </tr>`).join("") : `
+            <tr><td colspan="${isAdmin() ? 6 : 5}" class="empty">अजून Expenses नाहीत.</td></tr>
+          `}</tbody>
+        </table></div>
+      </div>
+    `);
+
+    $("#printExpenses").addEventListener("click", () => {
+      const report = $(".panel", content).outerHTML;
+      printReport("Expenses Report", report);
+    });
+
+    if (!isAdmin()) return;
+
+    $("#expenseForm").addEventListener("submit", e => {
+      e.preventDefault();
+
+      if (!isAdmin()) {
+        return toast("Expense सेव्ह करण्याची परवानगी फक्त Admin ला आहे.");
+      }
+
+      const f = e.target;
+
+      const item = {
+        expenseId:id("EXP"),
+        category:f.elements.category.value,
+        description:f.elements.description.value.trim(),
+        amount:num(f.elements.amount.value),
+        mode:f.elements.mode.value,
+        date:f.elements.date.value || today(),
+        remark:f.elements.remark.value.trim()
+      };
+
+      if (!item.description || item.amount <= 0) {
+        return toast("योग्य Expense तपशील भरा.");
+      }
+
+      const data = expenses();
+      data.push(item);
+
+      if (!write(KEYS.expenses, data)) return;
+
+      toast("Expense सेव्ह झाला.");
+      renderExpenses();
+    });
+
+    content.addEventListener("click", function expenseDeleteHandler(e) {
+      const btn = e.target.closest("[data-delete-expense]");
+
+      if (!btn || !content.contains(btn)) return;
+
+      if (!isAdmin()) {
+        return toast("Delete करण्याची परवानगी फक्त Admin ला आहे.");
+      }
+
+      if (!confirm("हा Expense Delete करायचा आहे का?")) return;
+
+      write(
+        KEYS.expenses,
+        expenses().filter(x => x.expenseId !== btn.dataset.deleteExpense)
+      );
+
+      toast("Expense Delete झाला.");
+      renderExpenses();
+    });
+  }
+
+  // =========================================
+  // REPORTS CENTER
+  // =========================================
+
+  function renderReports() {
+    page("Reports", "Choose the report you want to view", `
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Reports Center</h3>
+        </div>
+
+        <div class="quick-grid">
+          <button class="quick-btn" data-report="shop"><span>▣</span>Shop Report</button>
+          <button class="quick-btn" data-report="jobwork"><span>▤</span>Job Work Report</button>
+          <button class="quick-btn" data-report="monthly"><span>▥</span>Monthly Report</button>
+          <button class="quick-btn" data-report="all"><span>▦</span>All Reports</button>
+        </div>
+      </div>
+
+      <div id="reportView"></div>
+    `);
+
+    content.querySelectorAll("[data-report]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const type = btn.dataset.report;
+
+        if (type === "monthly") {
+          renderMonthlyReport();
+        } else {
+          renderSelectedReport(type);
         }
       });
     });
   }
 
-  // ==========================================
-  // RECEIVE PAYMENT
-  // ==========================================
+  // =========================================
+  // SHOP / JOB WORK / ALL REPORTS
+  // =========================================
 
-  function openReceivePayment() {
-    const orders = readData(KEYS.orders);
-    const jobs = readData(KEYS.jobs);
+  function renderSelectedReport(type) {
+    let records = [];
+    let title = "";
 
-    const records = [
-      ...orders.map(item => ({
-        ...item,
-        type: "Banner Order",
-        storageKey: KEYS.orders,
-        idKey: "orderId"
-      })),
-      ...jobs.map(item => ({
-        ...item,
-        type: "Job Work",
-        storageKey: KEYS.jobs,
-        idKey: "jobWorkId"
-      }))
-    ].filter(item => Number(item.balance || 0) > 0);
-
-    main.innerHTML = `
-      <div class="form-page">
-        <div class="form-header">
-          <button type="button" id="paymentBack">← Back</button>
-          <h2>Receive Payment</h2>
-        </div>
-
-        <div class="panel">
-          <h3>Pending Payments</h3>
-
-          <div class="field">
-            <label>Select Customer / Order</label>
-            <select id="paymentRecord">
-              <option value="">Select Order or Job Work</option>
-              ${records.map((item, index) => `
-                <option value="${index}">
-                  ${safe(item.customer)} - ${safe(item.type)}
-                  - Balance ${money(item.balance)}
-                </option>
-              `).join("")}
-            </select>
-          </div>
-
-          <div class="total-box">
-            <p>Customer: <strong id="paymentCustomer">-</strong></p>
-            <p>Bill Amount: <strong id="paymentTotal">${money(0)}</strong></p>
-            <p>Already Received: <strong id="paymentReceived">${money(0)}</strong></p>
-            <p>Remaining Balance: <strong id="paymentBalance">${money(0)}</strong></p>
-          </div>
-
-          <div class="form-grid">
-            <div>
-              <label>Amount Received Now</label>
-              <input id="newPaymentAmount" type="number" min="0.01" step="0.01">
-            </div>
-            <div>
-              <label>Payment Date</label>
-              <input id="paymentDate" type="date" value="${localDate()}">
-            </div>
-            <div>
-              <label>Payment Mode</label>
-              <select id="paymentMethod">
-                <option value="Cash">Cash</option>
-                <option value="UPI">UPI</option>
-                <option value="Bank Transfer">Bank Transfer</option>
-                <option value="Other">Other</option>
-              </select>
-            </div>
-          </div>
-
-          <button type="button" id="savePayment">Save Payment</button>
-          <button type="button" id="cancelPayment">Cancel</button>
-        </div>
-      </div>
-    `;
-
-    let selectedRecord = null;
-
-    get("paymentRecord").addEventListener("change", function () {
-      selectedRecord = this.value === "" ? null : records[Number(this.value)];
-
-      if (!selectedRecord) {
-        get("paymentCustomer").textContent = "-";
-        get("paymentTotal").textContent = money(0);
-        get("paymentReceived").textContent = money(0);
-        get("paymentBalance").textContent = money(0);
-        get("newPaymentAmount").value = "";
-        get("newPaymentAmount").removeAttribute("max");
-        return;
-      }
-
-      get("paymentCustomer").textContent = selectedRecord.customer;
-      get("paymentTotal").textContent = money(selectedRecord.total);
-      get("paymentReceived").textContent = money(selectedRecord.received);
-      get("paymentBalance").textContent = money(selectedRecord.balance);
-      get("newPaymentAmount").value = "";
-      get("newPaymentAmount").max = selectedRecord.balance;
-    });
-
-    get("savePayment").addEventListener("click", function () {
-      if (!selectedRecord) {
-        alert("आधी Customer Order निवडा.");
-        return;
-      }
-
-      const amount = Number(get("newPaymentAmount").value);
-      const date = get("paymentDate").value;
-      const method = get("paymentMethod").value;
-
-      if (!Number.isFinite(amount) || amount <= 0 ||
-          amount > Number(selectedRecord.balance)) {
-        alert("योग्य Payment Amount टाका.");
-        return;
-      }
-
-      if (!date) {
-        alert("Payment Date निवडा.");
-        return;
-      }
-
-      const savedRecords = readData(selectedRecord.storageKey);
-      const index = savedRecords.findIndex(item =>
-        String(item[selectedRecord.idKey]) ===
-        String(selectedRecord[selectedRecord.idKey])
-      );
-
-      if (index === -1) {
-        alert("Order सापडली नाही. पुन्हा प्रयत्न करा.");
-        return;
-      }
-
-      const updated = { ...savedRecords[index] };
-      const newReceived = Number(updated.received || 0) + amount;
-      const newBalance = Math.max(0, Number(updated.total || 0) - newReceived);
-
-      updated.received = newReceived;
-      updated.balance = newBalance;
-
-      const payments = readData(KEYS.payments);
-
-      payments.push({
-        paymentId: "PAY-" + Date.now(),
-        referenceId: updated[selectedRecord.idKey],
-        customer: updated.customer,
-        mobile: updated.mobile,
-        type: selectedRecord.type,
-        amount,
-        date,
-        method
-      });
-
-      const updatedRecords = savedRecords.map((item, i) =>
-        i === index ? updated : item
-      );
-
-      try {
-        localStorage.setItem(selectedRecord.storageKey, JSON.stringify(updatedRecords));
-        localStorage.setItem(KEYS.payments, JSON.stringify(payments));
-
-        alert(
-          "Payment Successfully Saved!\n\n" +
-          "Received: " + money(amount) + "\n" +
-          "Total Received: " + money(newReceived) + "\n" +
-          "Remaining Balance: " + money(newBalance)
-        );
-
-        openDashboard();
-      } catch (error) {
-        alert("Payment सेव्ह झाला नाही. Browser Storage तपासा.");
-      }
-    });
-
-    get("paymentBack").addEventListener("click", openDashboard);
-    get("cancelPayment").addEventListener("click", openDashboard);
-  }
-
-  // ==========================================
-  // MONTHLY REPORTS
-  // ==========================================
-
-  function openReports() {
-    const now = new Date();
-    const currentMonth = String(now.getMonth() + 1).padStart(2, "0");
-    const currentYear = now.getFullYear();
-
-    main.innerHTML = `
-      <div class="form-page">
-        <div class="form-header">
-          <button type="button" id="reportBack">← Back</button>
-          <h2>Monthly Reports</h2>
-        </div>
-
-        <div class="panel">
-          <h3>Select Report</h3>
-
-          <div class="form-grid">
-            <div>
-              <label>Report Type</label>
-              <select id="reportType">
-                <option value="jobwork">Job Work Report</option>
-                <option value="own">Own Shop Work Report</option>
-                <option value="expenses">Expenses Report</option>
-                <option value="complete">Complete Monthly Report</option>
-              </select>
-            </div>
-
-            <div>
-              <label>Month</label>
-              <select id="reportMonth">
-                ${Array.from({length: 12}, (_, i) => {
-                  const m = String(i + 1).padStart(2, "0");
-                  return `<option value="${m}" ${m === currentMonth ? "selected" : ""}>
-                    ${new Date(2000, i, 1).toLocaleString("en-IN", {month: "long"})}
-                  </option>`;
-                }).join("")}
-              </select>
-            </div>
-
-            <div>
-              <label>Year</label>
-              <select id="reportYear">
-                ${Array.from({length: 11}, (_, i) => currentYear - 5 + i)
-                  .map(y => `<option value="${y}" ${y === currentYear ? "selected" : ""}>${y}</option>`)
-                  .join("")}
-              </select>
-            </div>
-          </div>
-
-          <button type="button" id="generateReport">Generate Report</button>
-          <button type="button" id="printReport">Print Report</button>
-        </div>
-
-        <div id="monthlyReportOutput"></div>
-      </div>
-    `;
-
-    get("reportBack").addEventListener("click", openDashboard);
-    get("generateReport").addEventListener("click", renderMonthlyReport);
-    get("reportType").addEventListener("change", renderMonthlyReport);
-    get("reportMonth").addEventListener("change", renderMonthlyReport);
-    get("reportYear").addEventListener("change", renderMonthlyReport);
-
-    get("printReport").addEventListener("click", function () {
-      renderMonthlyReport();
-      window.print();
-    });
-
-    renderMonthlyReport();
-  }
-
-  function renderMonthlyReport() {
-    const output = get("monthlyReportOutput");
-    if (!output) return;
-
-    const type = value("reportType");
-    const month = value("reportMonth");
-    const year = value("reportYear");
-
-    const orders = readData(KEYS.orders).filter(x => isInMonth(x, month, year));
-    const jobs = readData(KEYS.jobs).filter(x => isInMonth(x, month, year));
-    const expenses = readData(KEYS.expenses).filter(x => isInMonth(x, month, year));
-    const payments = readData(KEYS.payments).filter(x => isInMonth(x, month, year));
-
-    const sales = [...orders, ...jobs].reduce((s, x) => s + Number(x.total || 0), 0);
-    const received = [...orders, ...jobs].reduce((s, x) => s + Number(x.received || 0), 0);
-    const pending = [...orders, ...jobs].reduce((s, x) => s + Number(x.balance || 0), 0);
-    const expenseTotal = expenses.reduce((s, x) => s + Number(x.amount || 0), 0);
-    const difference = sales - expenseTotal;
-    const cashBalance = received - expenseTotal;
-
-    const titleMap = {
-      jobwork: "Job Work Report",
-      own: "Own Shop Work Report",
-      expenses: "Expenses Report",
-      complete: "Complete Monthly Report"
-    };
-
-    const heading = `
-      <div class="panel">
-        <h2>${titleMap[type]}</h2>
-        <p>Month: ${month}/${year}</p>
-      </div>
-    `;
-
-    function salesTable(items, label) {
-      return `
-        <div class="panel">
-          <h3>${label}</h3>
-          <div style="overflow-x:auto">
-            <table style="width:100%;border-collapse:collapse">
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Customer</th>
-                  <th>Mobile</th>
-                  <th>File</th>
-                  <th>Total</th>
-                  <th>Received</th>
-                  <th>Balance</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${items.length ? items.map(x => `
-                  <tr>
-                    <td>${formatDate(dateOf(x))}</td>
-                    <td>${safe(x.customer)}</td>
-                    <td>${safe(x.mobile)}</td>
-                    <td>${safe(x.file)}</td>
-                    <td>${money(x.total)}</td>
-                    <td>${money(x.received)}</td>
-                    <td>${money(x.balance)}</td>
-                  </tr>
-                `).join("") : `<tr><td colspan="7">No records for this month.</td></tr>`}
-              </tbody>
-            </table>
-          </div>
-          <p><strong>Total: ${money(items.reduce((s, x) => s + Number(x.total || 0), 0))}</strong></p>
-        </div>
-      `;
-    }
-
-    function expensesTable(items) {
-      const categoryTotals = EXPENSE_CATEGORIES.map(category => ({
-        category,
-        total: items.filter(x => x.category === category)
-          .reduce((s, x) => s + Number(x.amount || 0), 0)
+    if (type === "shop") {
+      records = orders().map(x => ({
+        ...x,
+        type:"Banner Order",
+        recordKey:"orders",
+        recordId:x.orderId
       }));
 
-      return `
-        <div class="panel">
-          <h3>Expenses Details</h3>
-          <div style="overflow-x:auto">
-            <table style="width:100%;border-collapse:collapse">
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Category</th>
-                  <th>Description</th>
-                  <th>Amount</th>
-                  <th>Mode</th>
-                  <th>Remark</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${items.length ? items.map(x => `
-                  <tr>
-                    <td>${formatDate(dateOf(x))}</td>
-                    <td>${safe(x.category)}</td>
-                    <td>${safe(x.description)}</td>
-                    <td>${money(x.amount)}</td>
-                    <td>${safe(x.method)}</td>
-                    <td>${safe(x.remark)}</td>
-                  </tr>
-                `).join("") : `<tr><td colspan="6">No expenses for this month.</td></tr>`}
-              </tbody>
-            </table>
-          </div>
-
-          <h3>Category-wise Expenses</h3>
-          <table style="width:100%;border-collapse:collapse">
-            <thead><tr><th>Category</th><th>Total</th></tr></thead>
-            <tbody>
-              ${categoryTotals.map(x => `
-                <tr><td>${safe(x.category)}</td><td>${money(x.total)}</td></tr>
-              `).join("")}
-            </tbody>
-          </table>
-          <h3>Total Expenses: ${money(expenseTotal)}</h3>
-        </div>
-      `;
-    }
-
-    function summaryTable() {
-      return `
-        <div class="panel">
-          <h3>Monthly Financial Summary</h3>
-          <div class="total-box">
-            <p>Total Sales: <strong>${money(sales)}</strong></p>
-            <p>Total Received: <strong>${money(received)}</strong></p>
-            <p>Pending Amount: <strong>${money(pending)}</strong></p>
-            <p>Total Expenses: <strong>${money(expenseTotal)}</strong></p>
-            <p>Sales - Expenses: <strong>${money(difference)}</strong></p>
-            <p>Received - Expenses: <strong>${money(cashBalance)}</strong></p>
-          </div>
-          <p><small>Sales - Expenses हा बिलांवर आधारित फरक आहे. Received - Expenses ही जमा रक्कम वजा खर्च अशी गणना आहे.</small></p>
-        </div>
-      `;
+      title = "Shop Report";
     }
 
     if (type === "jobwork") {
-      output.innerHTML = heading + salesTable(jobs, "Job Work Details");
-      return;
+      records = jobs().map(x => ({
+        ...x,
+        type:"Job Work",
+        recordKey:"jobs",
+        recordId:x.jobWorkId
+      }));
+
+      title = "Job Work Report";
     }
 
-    if (type === "own") {
-      output.innerHTML = heading + salesTable(orders, "Own Shop Banner Orders");
-      return;
+    if (type === "all") {
+      records = allRecords();
+      title = "All Reports";
     }
 
-    if (type === "expenses") {
-      output.innerHTML = heading + expensesTable(expenses);
-      return;
-    }
+    records.sort((a,b) => (b.date || "").localeCompare(a.date || ""));
 
-    output.innerHTML =
-      heading +
-      summaryTable() +
-      salesTable(orders, "Own Shop Work") +
-      salesTable(jobs, "Job Work") +
-      expensesTable(expenses) +
-      `
+    const total = records.reduce((s,x) => s + getTotal(x), 0);
+    const received = records.reduce((s,x) => s + getReceived(x), 0);
+    const discount = records.reduce((s,x) => s + getDiscount(x), 0);
+    const balance = records.reduce((s,x) => s + getBalance(x), 0);
+
+    const view = $("#reportView");
+
+    if (!view) return;
+
+    let extraReports = "";
+
+    if (type === "all") {
+      const exp = expenses();
+      const pay = payments();
+
+      extraReports = `
         <div class="panel">
-          <h3>Payment History</h3>
-          <div style="overflow-x:auto">
-            <table style="width:100%;border-collapse:collapse">
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Customer</th>
-                  <th>Type</th>
-                  <th>Amount</th>
-                  <th>Mode</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${payments.length ? payments.map(p => `
-                  <tr>
-                    <td>${formatDate(p.date)}</td>
-                    <td>${safe(p.customer)}</td>
-                    <td>${safe(p.type)}</td>
-                    <td>${money(p.amount)}</td>
-                    <td>${safe(p.method)}</td>
-                  </tr>
-                `).join("") : `<tr><td colspan="5">No payment history.</td></tr>`}
-              </tbody>
-            </table>
-          </div>
+          <div class="panel-head"><h3>All Expenses</h3></div>
+          <div class="table-wrap"><table>
+            <thead><tr>
+              <th>Date</th><th>Category</th><th>Description</th>
+              <th>Mode</th><th>Amount</th>
+            </tr></thead>
+            <tbody>${exp.length ? exp.map(x => `
+              <tr>
+                <td>${dateText(x.date)}</td>
+                <td>${esc(x.category)}</td>
+                <td>${esc(x.description)}</td>
+                <td>${esc(x.mode)}</td>
+                <td>${money(x.amount)}</td>
+              </tr>
+            `).join("") : `<tr><td colspan="5">No expenses</td></tr>`}</tbody>
+          </table></div>
+          <p><strong>Total Expenses: ${money(exp.reduce((s,x) => s + num(x.amount), 0))}</strong></p>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><h3>All Payment History</h3></div>
+          ${paymentTable(pay)}
         </div>
       `;
+    }
+
+    view.innerHTML = `
+      <div class="panel">
+        <div class="page-actions">
+          <h2>${title}</h2>
+          <div class="btn-row">
+            <button class="btn small" id="printSelectedReport">Print Report</button>
+            <button class="btn secondary small" data-report-back>← Back to Reports</button>
+          </div>
+        </div>
+
+        <div class="stats-grid">
+          ${statCard("Total Orders", records.length, "▦")}
+          ${statCard("Total Sales", money(total), "₹")}
+          ${statCard("Amount Received", money(received), "✓", "green")}
+          ${statCard("Remaining Balance", money(balance), "!", "orange")}
+        </div>
+
+        <div class="summary">
+          <div class="summary-row">
+            <span>Total Discount</span>
+            <strong>${money(discount)}</strong>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><h3>${title} Records</h3></div>
+          ${recordTable(records)}
+        </div>
+
+        ${extraReports}
+      </div>
+    `;
+
+    $("[data-report-back]", view).addEventListener("click", renderReports);
+
+    $("#printSelectedReport", view).addEventListener("click", () => {
+      printReport(title, view.innerHTML);
+    });
   }
 
-  // ==========================================
-  // START APPLICATION
-  // ==========================================
+  // =========================================
+  // MONTHLY REPORT
+  // =========================================
 
-  bindNavigation();
+  function renderMonthlyReport() {
+    const now = new Date();
+    const selectedMonth = String(now.getMonth());
+    const selectedYear = String(now.getFullYear());
+
+    const view = $("#reportView");
+
+    if (!view) return;
+
+    view.innerHTML = `
+      <div class="panel">
+        <div class="page-actions">
+          <h2>Monthly Report</h2>
+
+          <div class="btn-row">
+            <button class="btn small" id="printMonthlyReport">Print Report</button>
+            <button class="btn secondary small" id="monthlyBack">← Back to Reports</button>
+          </div>
+        </div>
+
+        <div class="page-actions">
+          <h2>Report Filters</h2>
+
+          <div class="report-filters">
+            <select id="reportMonth">
+              ${Array.from({length:12},(_,i) => `
+                <option value="${i}" ${String(i) === selectedMonth ? "selected" : ""}>
+                  ${new Date(2000,i,1).toLocaleDateString("en-IN",{month:"long"})}
+                </option>
+              `).join("")}
+            </select>
+
+            <select id="reportYear">
+              ${Array.from({length:7},(_,i) => now.getFullYear() - i)
+                .map(y => `
+                  <option ${String(y) === selectedYear ? "selected" : ""}>
+                    ${y}
+                  </option>
+                `).join("")}
+            </select>
+          </div>
+        </div>
+
+        <div id="monthlyReportContent"></div>
+      </div>
+    `;
+
+    $("#monthlyBack").addEventListener("click", renderReports);
+
+    $("#printMonthlyReport").addEventListener("click", () => {
+      printReport(
+        "Monthly Report",
+        $("#monthlyReportContent").innerHTML
+      );
+    });
+
+    function refresh() {
+      const m = Number($("#reportMonth").value);
+      const y = Number($("#reportYear").value);
+
+      const inMonth = d => {
+        const dt = new Date((d || today()) + "T00:00:00");
+
+        return dt.getMonth() === m &&
+               dt.getFullYear() === y;
+      };
+
+      const records = allRecords().filter(x => inMonth(x.date));
+      const exp = expenses().filter(x => inMonth(x.date));
+      const pay = payments().filter(x => inMonth(x.date));
+
+      const sales = records.reduce((s,x) => s + getTotal(x), 0);
+      const received = pay.reduce((s,x) => s + num(x.amount), 0);
+      const expenseTotal = exp.reduce((s,x) => s + num(x.amount), 0);
+      const discount = records.reduce((s,x) => s + getDiscount(x), 0);
+
+      $("#monthlyReportContent").innerHTML = `
+        <div class="stats-grid">
+          ${statCard("Gross Sales", money(sales), "₹")}
+          ${statCard("Payments Received This Month", money(received), "✓", "green")}
+          ${statCard("Discount Recorded", money(discount), "−")}
+          ${statCard("Expenses", money(expenseTotal), "↗", "red")}
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><h3>Monthly Orders</h3></div>
+          ${recordTable(records)}
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><h3>Monthly Expenses</h3></div>
+
+          <div class="table-wrap"><table>
+            <thead><tr>
+              <th>Date</th><th>Category</th><th>Description</th><th>Amount</th>
+            </tr></thead>
+
+            <tbody>${exp.length ? exp.map(x => `
+              <tr>
+                <td>${dateText(x.date)}</td>
+                <td>${esc(x.category)}</td>
+                <td>${esc(x.description)}</td>
+                <td>${money(x.amount)}</td>
+              </tr>
+            `).join("") : `
+              <tr><td colspan="4" class="empty">No expenses</td></tr>
+            `}</tbody>
+          </table></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><h3>Payments Received This Month</h3></div>
+          ${paymentTable(pay)}
+        </div>
+      `;
+    }
+
+    $("#reportMonth").addEventListener("change", refresh);
+    $("#reportYear").addEventListener("change", refresh);
+
+    refresh();
+  }
+
+  // =========================================
+  // APPLICATION START / RESTORE AUTH SESSION
+  // =========================================
+
+  showLogin();
+
+  try {
+    const { data, error } = await supabaseClient.auth.getSession();
+
+    if (error) throw error;
+
+    const user = data.session?.user;
+
+    if (!user) {
+      localStorage.removeItem(SESSION_KEY);
+      showLogin();
+      return;
+    }
+
+    let role = "";
+
+    if (user.id === ADMIN_UID) {
+      role = "admin";
+    } else if (user.id === EXECUTIVE_UID) {
+      role = "executive";
+    }
+
+    if (!role) {
+      await supabaseClient.auth.signOut();
+      localStorage.removeItem(SESSION_KEY);
+      showLogin();
+      return;
+    }
+
+    localStorage.setItem(SESSION_KEY, JSON.stringify({
+      role,
+      username: getUsername(role),
+      userId: user.id
+    }));
+
+    await startApplication();
+
+  } catch (error) {
+    console.error("Authentication Error:", error);
+    showLogin();
+    toast("Login Session तपासता आली नाही.");
+  }
+
 });

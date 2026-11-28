@@ -4,238 +4,328 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PRINTFLOW - Printing Management</title>
 
-  <!-- CSS LINK -->
+  <title>KADAM DIGITAL | Shop Management</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
   <link rel="stylesheet" href="style.css">
+
+  <style>
+    body.auth-locked .app {
+      display: none !important;
+    }
+
+    .login-screen {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      background: linear-gradient(135deg,#101b35,#1e3a68,#3676bd);
+      font-family: Inter, sans-serif;
+    }
+
+    .login-card {
+      width: 100%;
+      max-width: 420px;
+      background: #fff;
+      border-radius: 20px;
+      padding: 32px;
+      box-shadow: 0 20px 60px #0005;
+    }
+
+    .login-card h2 {
+      text-align: center;
+      color: #172b4d;
+      margin: 0 0 8px;
+    }
+
+    .login-subtitle {
+      text-align: center;
+      color: #718096;
+      margin-bottom: 25px;
+      font-size: 13px;
+    }
+
+    .login-tabs {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 22px;
+    }
+
+    .login-tabs button {
+      flex: 1;
+      padding: 12px 8px;
+      border: 1px solid #dce4ef;
+      border-radius: 9px;
+      background: #f4f7fb;
+      color: #344563;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .login-tabs button.active {
+      background: #1e4f91;
+      color: white;
+      border-color: #1e4f91;
+    }
+
+    .login-card label {
+      display: block;
+      margin: 14px 0 7px;
+      color: #344563;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .login-card input {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 13px;
+      border: 1px solid #d8e0eb;
+      border-radius: 9px;
+      outline: none;
+      font-size: 14px;
+    }
+
+    .login-card input:focus {
+      border-color: #3478c5;
+    }
+
+    .login-submit {
+      width: 100%;
+      padding: 14px;
+      margin-top: 22px;
+      border: none;
+      border-radius: 9px;
+      color: white;
+      background: linear-gradient(135deg,#174a87,#347bc5);
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .login-submit:disabled {
+      opacity: .65;
+      cursor: wait;
+    }
+
+    .login-error {
+      color: #d62828;
+      font-size: 13px;
+      text-align: center;
+      margin-top: 13px;
+      min-height: 18px;
+    }
+
+    .login-brand {
+      text-align: center;
+      font-weight: 800;
+      color: #1e4f91;
+      letter-spacing: 1px;
+      margin-bottom: 18px;
+    }
+
+    .auth-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-left: auto;
+    }
+
+    .auth-actions button {
+      border: 1px solid #dce4ef;
+      background: white;
+      color: #23466f;
+      padding: 8px 11px;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 12px;
+    }
+
+    .auth-actions button.logout {
+      background: #fff1f1;
+      color: #c62828;
+      border-color: #f3cccc;
+    }
+
+    @media(max-width:480px) {
+      .login-card {
+        padding: 24px 20px;
+      }
+    }
+  </style>
 </head>
 
-<body>
+<body class="auth-locked">
 
-<div class="app">
+  <!-- LOGIN SCREEN -->
+  <div class="login-screen" id="loginScreen">
 
-  <aside class="sidebar">
-    <div class="brand">
-      <div class="brand-icon">P</div>
-      <div>
-        <h2>PRINTFLOW</h2>
-        <span>PRINT MANAGEMENT</span>
+    <div class="login-card">
+
+      <div class="login-brand">KADAM DIGITAL</div>
+
+      <h2>Welcome Back</h2>
+
+      <div class="login-subtitle">
+        Printing Business Management System
       </div>
+
+      <div class="login-tabs">
+
+        <button
+          type="button"
+          class="active"
+          data-role="admin">
+          Admin Login
+        </button>
+
+        <button
+          type="button"
+          data-role="executive">
+          Executive Login
+        </button>
+
+      </div>
+
+      <form id="loginForm">
+
+        <label>Username</label>
+
+        <input
+          id="loginUsername"
+          type="text"
+          placeholder="Enter username"
+          required
+          autocomplete="username"
+        >
+
+        <label>Password</label>
+
+        <input
+          id="loginPassword"
+          type="password"
+          placeholder="Enter password"
+          required
+          autocomplete="current-password"
+        >
+
+        <button
+          class="login-submit"
+          id="loginSubmit"
+          type="submit">
+          Login to Dashboard
+        </button>
+
+        <div
+          class="login-error"
+          id="loginError">
+        </div>
+
+      </form>
+
     </div>
 
-    <div class="menu-label">MAIN MENU</div>
+  </div>
 
-    <nav>
-      <a class="active" href="#" data-page="dashboard">
-        <span>▦</span> Dashboard
-      </a>
-      <a href="#" data-page="banner"><span>▤</span> New Banner Order</a>
-      <a href="#" data-page="jobwork"><span>▣</span> Job Work</a>
-      <a href="#" data-page="customers"><span>♧</span> Customers</a>
-      <a href="#" data-page="payments"><span>₹</span> Payments</a>
-      <a href="#" data-page="expenses"><span>▥</span> Expenses</a>
-      <a href="#" data-page="orders"><span>▤</span> All Orders</a>
-      <a href="#" data-page="reports"><span>▧</span> Monthly Reports</a>
-    </nav>
 
-    <div class="sidebar-bottom">
-      <div class="profile">
-        <div class="avatar">A</div>
+  <!-- MAIN APPLICATION -->
+  <div class="app">
+
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+
+      <div class="brand">
+
+        <div class="brand-icon">P</div>
+
         <div>
-          <strong>Administrator</strong>
-          <small>Owner Account</small>
+          <h2>KADAM DIGITAL</h2>
+          <small>SHOP MANAGEMENT</small>
         </div>
-      </div>
-    </div>
-  </aside>
 
-  <main class="main">
-
-    <header class="topbar">
-      <div>
-        <h2>Dashboard</h2>
-        <p>Welcome back! Here's your printing overview.</p>
-      </div>
-      <div class="top-actions">
-        <span class="status">● System Active</span>
-        <div class="avatar">A</div>
-      </div>
-    </header>
-
-    <section class="welcome">
-      <div>
-        <span class="welcome-tag">PRINTING BUSINESS MANAGER</span>
-        <h1>Manage Your Printing Business</h1>
-        <p>All your banner orders, job work and billing in one place.</p>
-      </div>
-      <div class="welcome-decoration">P</div>
-    </section>
-
-    <section class="section-heading">
-      <div>
-        <h3>Business Overview</h3>
-        <p>Your business summary at a glance</p>
-      </div>
-      <span class="date-label">November 2026</span>
-    </section>
-
-    <section class="stats">
-
-      <div class="stat-card">
-        <div class="stat-top">
-          <span>Total Orders</span>
-          <span class="stat-icon wine">▤</span>
-        </div>
-        <h2>00</h2>
-        <small>All printing orders</small>
       </div>
 
-      <div class="stat-card">
-        <div class="stat-top">
-          <span>Total Sales</span>
-          <span class="stat-icon gold">₹</span>
+      <div class="menu-label">MAIN MENU</div>
+
+      <nav>
+
+        <a href="#" data-page="dashboard" class="active">
+          ▦ <span>Dashboard</span>
+        </a>
+
+        <a href="#" data-page="banner">
+          ▣ <span>New Banner Order</span>
+        </a>
+
+        <a href="#" data-page="jobwork">
+          ▤ <span>Job Work</span>
+        </a>
+
+        <a href="#" data-page="customers">
+          ♙ <span>Customers</span>
+        </a>
+
+        <a href="#" data-page="payments">
+          ₹ <span>Payments</span>
+        </a>
+
+        <a href="#" data-page="expenses">
+          ↗ <span>Expenses</span>
+        </a>
+
+        <a href="#" data-page="orders">
+          ☷ <span>All Orders</span>
+        </a>
+
+        <a href="#" data-page="reports">
+          ▥ <span>Monthly Reports</span>
+        </a>
+
+      </nav>
+
+      <div class="sidebar-bottom">
+
+        <div class="side-note">
+          KADAM DIGITAL<br>
+          <small>Smart Printing Business Manager</small>
         </div>
-        <h2>₹0.00</h2>
-        <small>Total billed amount</small>
+
       </div>
 
-      <div class="stat-card">
-        <div class="stat-top">
-          <span>Payment Received</span>
-          <span class="stat-icon green">✓</span>
-        </div>
-        <h2>₹0.00</h2>
-        <small>Amount collected</small>
-      </div>
+    </aside>
 
-      <div class="stat-card">
-        <div class="stat-top">
-          <span>Pending Amount</span>
-          <span class="stat-icon orange">◷</span>
-        </div>
-        <h2>₹0.00</h2>
-        <small>Customer outstanding</small>
-      </div>
 
-    </section>
+    <!-- MAIN CONTENT -->
+    <main class="main">
 
-    <section class="content-grid">
+      <header class="topbar">
 
-      <div class="panel">
-        <div class="panel-heading">
-          <div>
-            <h3>Quick Actions</h3>
-            <p>Start a new transaction</p>
-          </div>
-        </div>
-
-        <div class="quick-actions">
-          <button class="action-card" data-page="banner">
-            <span class="action-icon wine">＋</span>
-            <strong>New Banner Order</strong>
-            <small>Create printing bill</small>
-          </button>
-
-          <button class="action-card" data-page="jobwork">
-            <span class="action-icon gold">▣</span>
-            <strong>New Job Work</strong>
-            <small>Customer supplied design</small>
-          </button>
-
-          <button class="action-card" data-page="payments">
-            <span class="action-icon green">₹</span>
-            <strong>Receive Payment</strong>
-            <small>Update customer payment</small>
-          </button>
-
-          <button class="action-card" data-page="reports">
-            <span class="action-icon orange">▤</span>
-            <strong>View Reports</strong>
-            <small>Monthly business report</small>
-          </button>
-        </div>
-      </div>
-
-      <div class="panel summary-panel">
-        <div class="panel-heading">
-          <div>
-            <h3>Monthly Summary</h3>
-            <p>November 2026</p>
-          </div>
-        </div>
-
-        <div class="summary-row">
-          <span>Total Printing</span>
-          <strong>₹0.00</strong>
-        </div>
-
-        <div class="summary-row">
-          <span>Pasting Income</span>
-          <strong>₹0.00</strong>
-        </div>
-
-        <div class="summary-row">
-          <span>Job Work Income</span>
-          <strong>₹0.00</strong>
-        </div>
-
-        <div class="summary-row">
-          <span>Total Expenses</span>
-          <strong>₹0.00</strong>
-        </div>
-
-        <div class="profit-box">
-          <span>Net Profit / Loss</span>
-          <h2>₹0.00</h2>
-        </div>
-      </div>
-
-    </section>
-
-    <section class="panel orders-panel">
-      <div class="panel-heading">
         <div>
-          <h3>Recent Orders</h3>
-          <p>Latest banner printing records</p>
+          <h1 id="pageTitle">Dashboard</h1>
+          <p id="pageSubtitle">Your business at a glance</p>
         </div>
-        <button class="view-btn" data-page="orders">View All →</button>
-      </div>
 
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Bill No.</th>
-              <th>Customer</th>
-              <th>File Name</th>
-              <th>Media</th>
-              <th>Amount</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td colspan="6" class="empty">
-                No orders available yet.
-                <br>
-                Your new orders will appear here.
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
+        <div class="top-date" id="todayDate"></div>
 
-    <footer>
-      PRINTFLOW · Printing Management System
-      <span>Version 1.0</span>
-    </footer>
+      </header>
 
-  </main>
-</div>
+      <section id="pageContent"></section>
 
-<!-- JAVASCRIPT LINK -->
-<script src="script.js"></script>
+    </main>
+
+  </div>
+
+
+  <!-- SUPABASE LIBRARY -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+  <!-- MAIN APPLICATION JAVASCRIPT -->
+  <script src="script.js"></script>
 
 </body>
 </html>
